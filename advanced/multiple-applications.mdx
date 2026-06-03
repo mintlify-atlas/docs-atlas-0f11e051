@@ -1,5 +1,5 @@
 ---
-title: "Multiple Admin Applications in a Single Rails App"
+title: "Multiple Admin Applications in One Rails App: Torque Admin"
 sidebarTitle: "Multiple Apps"
 description: "Mount two or more fully independent Torque Admin engines in one Rails app, each with its own namespace, theme, authentication strategy, and resource set."
 ---
@@ -62,7 +62,7 @@ Two applications **cannot share the same module name** under the same parent. If
 </Warning>
 
 <Note>
-Each application's `mod.name` is used as the Rails layout name. For the `:admin` application the layout must be `app/views/layouts/admin.html.erb`; for `:partner` it must be `app/views/layouts/partner.html.erb`. Ensure these layout files exist and match the application's module name exactly.
+Each application's `name` (a symbol such as `:admin` or `:partner`, stringified) is used as the Rails layout name via `layout admin_application.name.to_s` in `BaseController`. For the `:admin` application the layout must be `app/views/layouts/admin.html.erb`; for `:partner` it must be `app/views/layouts/partner.html.erb`. Ensure these layout files exist and match the application name exactly.
 </Note>
 
 ## Independent Configuration Per Application

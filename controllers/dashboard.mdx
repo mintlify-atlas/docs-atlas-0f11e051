@@ -93,7 +93,7 @@ end
 ```
 
 <Note>
-If no `dashboard` route has been declared by the time routes are finalised, Torque Admin automatically adds one via `finalize_routes!`. Internally, `Application#finalize_routes!` calls `auto_dashboard_route`, which runs `dashboard_root` through a new `Mapper` instance. `dashboard_root` only registers the dashboard when no `dashboard` named route already exists, so it is safe to call even if you have declared one manually. This ensures every admin application always has a working home page.
+If no `dashboard` route has been declared by the time routes are finalised, Torque Admin automatically adds one via `finalize_routes!`. Internally, `Application#finalize_routes!` calls `auto_dashboard_route`, which runs `dashboard_root` through a new `Mapper` instance. `dashboard_root` only registers the dashboard route itself when no `dashboard` named route already exists, but it **always** registers a root alias (mapping e.g. `root_path` to the dashboard route) regardless of whether the dashboard was added by this call or was declared earlier. This ensures every admin application always has a working home page and a root path helper.
 </Note>
 
 ## Complete Routing + Controller Example

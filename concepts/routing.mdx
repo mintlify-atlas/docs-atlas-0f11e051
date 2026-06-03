@@ -1,7 +1,7 @@
 ---
 title: "Admin Routing DSL: Resources, Dashboards, and Auth"
 sidebarTitle: "Routing"
-description: "Explore Torque Admin's routing DSL — the admin helper, resource declarations, dashboard routes, sections, widgets, custom actions, and authentication hooks."
+description: "Explore Torque Admin's routing DSL — the admin helper, resource declarations, dashboard routes, sections, widgets, custom actions, and auth hooks."
 ---
 
 Torque Admin extends `ActionDispatch::Routing::Mapper` through the `Torque::Admin::Routing` module, which is mixed into your application's route set during engine initialization. All admin routes live inside a single `admin` block in `config/routes.rb`. That block mounts the engine once (transparently), opens a custom `Mapper` scope, and passes control to an extended DSL that gives you resource declarations, dashboard helpers, sidebar sections, custom actions, widget slots, and authentication directives — all with automatic route annotations.
@@ -17,7 +17,7 @@ Rails.application.routes.draw do
 end
 ```
 
-`admin(name, path, **options, &block)` does three things:
+`admin(name = :default, path = nil, **options, &block)` does three things:
 
 1. Calls `mount(app.engine, at: path, as: name)` on the host application's route set (only on the first call).
 2. Clears the engine's existing routes and appends a `finalize_routes!` callback that auto-injects a dashboard root.
@@ -38,7 +38,7 @@ resources :comments, actions: [:approve], widgets: [:quick_view], source: :comme
 
 Registers the full set of plural admin routes. Default actions for a plural resource are:
 
-```
+```text
 index  search  new  create  upsert  show  preview  edit  update  destroy
 ```
 
@@ -57,7 +57,7 @@ resource :settings, actions: [:reset]
 
 Registers a singleton admin resource. Default actions are:
 
-```
+```text
 new  create  show  preview  edit  update  destroy
 ```
 
@@ -102,21 +102,21 @@ end
 
 ```ruby
 resources :posts do
-  actions :publish, :archive             # PATCH member actions
-  actions :bulk_delete, on: :collection  # can be scoped explicitly
-  action  :preview_email, view: true     # GET + PATCH pair
+  actions :publish, :archive      # PATCH member actions
+  action  :preview_email, view: true  # GET + PATCH pair
 end
 ```
 
-`actions(*list, view:, via:)` registers custom routes against the resource:
+`action(*names, view:, via:, add_alias:, action:)` registers custom routes against the resource:
 
 | Option | Default | Description |
 |---|---|---|
 | `via:` | `:patch` | HTTP verb for the action |
 | `view:` | `false` | When `true`, registers both a GET (for the form) and the primary verb |
 | `add_alias:` | `false` | Creates a named route alias matching the collection name |
+| `action:` | `nil` | Override the controller action name for the route |
 
-Routes drawn with `actions` are annotated with `type: :action` and appear in `resource.actions`.
+`actions(*, **, &block)` is a scope helper that opens an action scope and forwards its arguments to `action`. When called with a block, the block is evaluated inside the action scope instead. Routes drawn with `action` are annotated with `type: :action` and appear in `resource.actions`.
 
 ### `with_actions` / `without_actions` — Default Action Filtering
 
@@ -207,7 +207,9 @@ Rails.application.routes.draw do
         widgets :engagement_chart, on: :member
       end
 
-      resources :pages, without_actions: [:upsert]
+      without_actions :upsert do
+        resources :pages
+      end
       searchable :tags
     end
 

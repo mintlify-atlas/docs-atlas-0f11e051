@@ -27,12 +27,16 @@ The constants `RESOURCE` (a `Torque::Admin::Resource` instance) and `RESOURCE_PA
 | 1 | `StreamController` | Async / streaming action support via `ActionController::Live` |
 | 2 | `CollectionController` | Scoped collection loading with filter, scope, sort, and pagination pipeline |
 | 3 | `MemberController` | Single-record lookup; exposes `resource` / `member` helpers to views |
-| 4 | `IndexController` | Index page element coordination |
-| 5 | `ShowController` | Show page element coordination |
+| 4 | `IndexController` | Index page element coordination *(planned — currently a stub)* |
+| 5 | `ShowController` | Show page element coordination *(planned — currently a stub)* |
 | 6 | `FormController` | Form record initialisation and `form_element` setup |
-| 7 | `BatchController` | Batch-action support between index and processing actions |
-| 8 | `ActionsController` | Default handlers for router-generated actions (e.g. `search`) |
-| 9 | `WidgetsController` | Widget data helpers for index and dashboard pages |
+| 7 | `BatchController` | Batch-action support between index and processing actions *(planned — currently a stub)* |
+| 8 | `ActionsController` | Default handlers for router-generated actions (e.g. `search`) *(planned — currently a stub)* |
+| 9 | `WidgetsController` | Widget data helpers for index and dashboard pages *(planned — currently a stub)* |
+
+<Note>
+`IndexController`, `ShowController`, `BatchController`, `ActionsController`, and `WidgetsController` are included by `ResourceController` but their implementations are still in progress. Each module file contains only a `TODO` comment describing the planned behaviour. They are safe to include — they add no methods yet — but any behaviour they will provide in the future is not yet available.
+</Note>
 
 ## Template Path Resolution
 
@@ -150,7 +154,6 @@ Uses ActiveRecord reflection to find the `belongs_to` association on `RESOURCE.r
 | `admin_application_config` | Shortcut to `admin_application.config` |
 | `admin_controller_name` | Underscored controller name, relative to the admin namespace |
 | `ui_framework` | The UI framework name from the configured theme builder |
-| `elements` | Element DSL access (menus, forms, etc.) |
 | `route_annotations` | Hash of annotations attached to the current route by the mapper |
 | `route_annotation(key)` | Single annotation value lookup |
 | `initialized_side_controllers` | Lazy hash of sibling controller instances sharing this request/response pair |

@@ -196,9 +196,9 @@ end
 
   ```ruby
   config.theme_extensions = [
-    MyAdmin::ThemeOverrides,        # Module
-    ->(b) { b.define(:my_widget) }, # Proc
-    'MyAdmin::ExtraHelpers',        # String (constantized at boot)
+    MyAdmin::ThemeOverrides,   # Module
+    proc { define(:my_widget) { |b| b.preset(:default, as: 'div') } }, # Proc (instance_exec, no arg)
+    'MyAdmin::ExtraHelpers',   # String (constantized at boot)
   ]
   ```
 </ParamField>

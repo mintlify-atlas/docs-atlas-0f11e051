@@ -40,7 +40,7 @@ PROVIDERS = %i[rails custom devise]
 | Provider | Block required? | How it works |
 |---|---|---|
 | `:rails` | **Yes** | Your block is evaluated inside the standard `ActionDispatch::Routing::Mapper`, giving you access to the Rails `authenticate` constraint helper. |
-| `:custom` | **Yes** | Your block runs inside the admin mapper scope so you can define any route-level logic you need. |
+| `:custom` | **Yes** | Your block is evaluated inside the standard `ActionDispatch::Routing::Mapper` (via `external`), the same as `:rails`, so any standard Rails routing helpers are available. |
 | `:devise` | **No** | Automatically calls `devise_for(resource, module: ...)` via the `external` scope, wiring Devise's session routes into the admin namespace. |
 
 The `authenticate` method is called inside your admin route definition:
@@ -113,7 +113,7 @@ The block is executed inside a standard `ActionDispatch::Routing::Mapper` (via `
 
 ## Custom Authentication (`:custom`)
 
-Use `:custom` when you have your own authentication library or a non-standard setup. A block **is required**, and it runs inside the admin mapper scope:
+Use `:custom` when you have your own authentication library or a non-standard setup. A block **is required**, and it runs inside a standard `ActionDispatch::Routing::Mapper` (via `external`), giving you access to all standard Rails routing helpers:
 
 ```ruby
 # config/routes.rb

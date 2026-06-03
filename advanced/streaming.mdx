@@ -45,7 +45,7 @@ stream_from_actions(:index, :show)
 stream_from_actions :index, :show if admin_application.config.stream_actions
 ```
 
-`DashboardController` does the same for its `:index` action.
+`DashboardController` does the same for its `:index` action by calling `stream_actions :index` directly in its `included` block when `admin_application.config.stream_actions` is truthy.
 
 The protected instance method `async_action?` answers whether the current dispatch should stream:
 
@@ -121,14 +121,14 @@ end
 
 ### Opt a specific controller out
 
-Override `async_action?` to return `false`, or pass an empty array to `stream_actions`:
+Override `async_action?` to return `false`, or reset `stream_actions` to an empty frozen array:
 
 ```ruby
 class Admin::PostsController < Admin::BaseController
   include Admin::ResourceController
 
   # Option A — clear the inherited list
-  stream_actions []
+  self.stream_actions = [].freeze
 
   # Option B — override the predicate
   def async_action?(_name = nil) = false

@@ -4,7 +4,7 @@ sidebarTitle: "Collection"
 description: "Filter, Scope, Sort, and Pagination sub-concerns chain through load_collection to build a composable pipeline for managing admin resource collections."
 ---
 
-`CollectionController` is the concern responsible for loading and shaping the list of records shown in admin index pages and similar collection-backed views. Rather than implementing everything in one place, it is itself composed of four narrowly focused sub-concerns — `FilterController`, `ScopeController`, `SortController`, and `PaginationController` — each of which hooks into the same `load_collection` pipeline via Ruby's `super` chaining mechanism.
+`CollectionController` is the concern responsible for loading and shaping the list of records shown in admin index pages and similar collection-backed views. Rather than implementing everything in one place, it is itself composed of five sub-concerns — `BatchController`, `FilterController`, `ScopeController`, `SortController`, and `PaginationController` — each included in that order. The four load-shaping concerns (`FilterController`, `ScopeController`, `SortController`, and `PaginationController`) each hook into the same `load_collection` pipeline via Ruby's `super` chaining mechanism. `BatchController` is also included at this level but is currently a planned stub with no implemented methods.
 
 ## How the Pipeline Works
 
@@ -37,7 +37,7 @@ def collection
 end
 
 def collection_ivar_name
-  :@#{RESOURCE.plural}
+  :"@#{RESOURCE.plural}"
 end
 ```
 

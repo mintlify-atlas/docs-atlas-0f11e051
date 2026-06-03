@@ -30,7 +30,7 @@ Each string value maps directly to a helper module inside `Torque::Elements::Hel
 | `'bootstrap'` | `Torque::Elements::Helpers::Bootstrap` |
 | `'bulma'` | `Torque::Elements::Helpers::Bulma` |
 | `'semantic_ui'` | `Torque::Elements::Helpers::SemanticUI` |
-| `'tailwind'` | Built-in Tailwind helpers |
+| `'tailwind'` | No dedicated theme module — uses Tailwind utility classes directly |
 
 When the admin application initializes, `UiBuilder.add_framework` is called with the theme name and the corresponding module, creating a dedicated `UiBuilder` subclass that has all component definitions baked in.
 
@@ -53,6 +53,8 @@ When the admin application initializes, `UiBuilder.add_framework` is called with
     | `button` | `<button class="ui button">` | Presets: `:default`, `:multiple` (renders as `<div class="ui buttons">`) |
     | `container` | `<div class="ui container">` | Toggles: `text`, `fluid`, `resizable` |
     | `divider` | `<div class="ui divider">` | Toggles: `vertical`, `horizontal`, `fitted`, `hidden`, `section` |
+    | `emoji` | `<em>` | Argument `:name` assigned to `data-emoji`; no content rendered; imports: `size` |
+    | `flag` | `<i class="ui flag">` | Argument `:name` assigned to class; no content rendered |
     | `header` | `<div class="ui header">` | Imports: `icon`, `size`, `color`; toggles: `sub`, `dividing`, `block`, `inverted` |
     | `icon` | `<i>` | Argument `:name` formatted with `ICON`; no content rendered |
     | `image` | `<img class="ui image">` | Toggles: `avatar`, `bordered`, `fluid`, `rounded`, `circular`, `centered` |
@@ -114,7 +116,7 @@ When the admin application initializes, `UiBuilder.add_framework` is called with
 
     **ICON format:** `"fas fa-%s"` (Font Awesome, same as Bootstrap)
 
-    **SIZES mapping:** `small → 'is-small'`, `default → ''`, `normal → ''`, `medium → 'is-medium'`, `large → 'is-large'` (plus numeric aliases 1–5)
+    **SIZES mapping:** `small → 'is-small'`, `default → ''`, `normal → 'is-normal'`, `medium → 'is-medium'`, `large → 'is-large'` (plus numeric aliases 1–5)
 
     **Defined elements:**
 

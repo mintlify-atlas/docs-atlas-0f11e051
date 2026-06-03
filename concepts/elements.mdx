@@ -1,7 +1,7 @@
 ---
-title: "The Elements DSL: Reusable Admin UI Components"
+title: "Torque Admin Elements: Reusable UI Component System"
 sidebarTitle: "Elements"
-description: "Discover how Torque Admin's Elements system defines, resolves, and renders logical UI components — menus, frames, and custom widgets — through a declarative DSL."
+description: "Discover how Torque Admin's Elements system defines, resolves, and renders logical UI components — menus, frames, and custom widgets — declaratively."
 ---
 
 Elements are the admin's composable UI vocabulary. Rather than scattering HTML markup across view templates, Torque Admin asks you to describe the _logical_ structure of each component — what items a menu contains, what columns a table exposes — and then delegates the translation into actual markup to the `UiBuilder`, which applies the rules of whichever CSS framework you have selected. The result is a clean separation between structure and presentation that makes it straightforward to override a single element without touching anything else.
@@ -24,7 +24,7 @@ Every element class ultimately inherits from `Torque::Elements::Base`. The class
 
 An element passes through a set of named states stored in a `Set` on `@state`:
 
-```
+```text
 initiated → loading → loaded → rendering → rendered
 ```
 
@@ -99,7 +99,7 @@ alias_element :navigation, :main_menu
 
 `MenuElement` is the primary built-in concrete element. It extends `BaseElement` with:
 
-- **`item(identifier, label, href, **options)`** — adds a menu entry node
+- **`item(identifier, href_or_label = nil, href = nil, **options)`** — adds a menu entry node. When only two arguments are given, the second argument is treated as the `href` and the label is derived from the identifier. When all three are given, the second is the label and the third is the `href`.
 - **`divider`** — adds a visual separator node
 - **`sort`** setting — when `true` (or `:root` / `:children`), sorts items alphabetically
 - **`icons`** setting — a hash of `identifier → icon_name`, or `true` to use the controller's icon helper
