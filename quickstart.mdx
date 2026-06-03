@@ -1,47 +1,152 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Torque Admin in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Create a working admin interface that lists, shows, and manages a Rails model end-to-end — from Gemfile to browser — in a single sitting."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+This guide takes you from a bare Rails 8.1 application to a live admin interface that manages a real ActiveRecord model. By the end you will have a dashboard at `/admin`, a fully routed `Post` resource with index, show, new, create, edit, update, and destroy actions, and streamed page delivery via Hotwire — all without writing a single view template.
 
 ## Prerequisites
 
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+- An existing Rails **8.1+** application
+- At least one ActiveRecord model — this guide uses `Post` (generated with `rails g model Post title:string body:text`)
+- Ruby **3.2.0** or later
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+<Step title="Add the gem and bundle">
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+Add `torque-admin` to your `Gemfile`:
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
-</Steps>
+```ruby Gemfile
+gem 'torque-admin'
+```
+
+Then install it:
+
+```bash
+bundle install
+```
+
+`Torque::Admin::Railtie` is loaded automatically during Rails boot. It extends `ActionDispatch::Routing::Mapper` with the `admin` routing helper and registers the engine's eager-load namespace — no manual `require` needed.
+
+</Step>
+
+<Step title="Declare routes in config/routes.rb">
+
+Open `config/routes.rb` and use the `admin` routing helper to mount the engine and declare your resource:
+
+```ruby config/routes.rb
+Rails.application.routes.draw do
+  # All other application routes …
+
+  admin do
+    resources :posts
+  end
+end
+```
+
+The `admin` block does three things in one call:
+
+1. Mounts `Admin::Engine` at `/admin` (the default path)
+2. Opens a routing scope against the engine's internal router
+3. Registers `posts` as a resource within the admin application so it appears in navigation and breadcrumbs
+
+This generates the standard seven RESTful routes — `admin_posts_path`, `admin_post_path`, etc. — all namespaced under the engine.
+
+</Step>
+
+<Step title="Create Admin::BaseController">
+
+Torque Admin does not generate base classes for you. Create the base controller for your admin namespace:
+
+```ruby app/controllers/admin/base_controller.rb
+module Admin
+  class BaseController < ApplicationController
+    include Torque::Admin::BaseController
+  end
+end
+```
+
+Including `Torque::Admin::BaseController` pulls in four key concerns in one line:
+
+- **`Elements::Frame`** — handles Turbo frame detection and streaming context
+- **`Elements::Templates`** — drives the Element template resolution pipeline
+- **`Elements::Controller`** — exposes the `element` and `main_menu` class-level DSL
+- **`SettingsController`** — provides per-request access to admin configuration and UI builder
+
+The concern also appends the engine's own view path and sets the Rails layout to `admin`, so `app/views/layouts/admin.html.erb` in your host application is used if it exists, with the engine's built-in layout as a fallback.
+
+<Note>
+  Before exposing your admin in production, add authentication to `Admin::BaseController`. For example, with Devise you can add `before_action :authenticate_user!`. See [Authentication Configuration](/configuration/authentication) for strategies including Devise, Rodauth, and custom session checks.
+</Note>
+
+</Step>
+
+<Step title="Create Admin::PostsController">
+
+Now create a controller for the `Post` resource:
+
+```ruby app/controllers/admin/posts_controller.rb
+module Admin
+  class PostsController < Admin::BaseController
+    include Torque::Admin::ResourceController
+  end
+end
+```
+
+Including `Torque::Admin::ResourceController` composes all seven CRUD concerns automatically — you do not need to define `index`, `show`, `new`, `create`, `edit`, `update`, or `destroy` yourself. Under the hood it includes:
+
+| Concern | Responsibility |
+|---|---|
+| `StreamController` | Streams response chunks via `ActionController::Live` |
+| `CollectionController` | Scoping, filtering, sorting, and pagination for collection actions |
+| `MemberController` | Record lookup and parameter assignment for member actions |
+| `IndexController` | `index` action implementation |
+| `ShowController` | `show` action implementation |
+| `FormController` | `new`, `create`, `edit`, `update` implementations |
+| `BatchController` | Bulk-action support |
+| `ActionsController` | Custom member and collection action helpers |
+| `WidgetsController` | Dashboard widget rendering |
+
+The concern also looks up the `RESOURCE` constant (set by the engine's routing layer) so that `PostsController::RESOURCE` resolves to the `Admin::Resource` object for `Post`, giving you access to the model class, singular/plural names, and registered sections.
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  `stream_actions` is `true` by default, which means `index` and `show` are automatically wired to stream their response chunks using `ActionController::Live`. Each section of the page — header, filters, table body, pagination — is flushed to the browser as it becomes ready. You can disable streaming globally by setting `config.stream_actions = false` in your admin configuration, or per-controller by not calling `stream_from_actions`.
 </Tip>
+
+</Step>
+
+<Step title="Visit /admin in the browser">
+
+Start your Rails server:
+
+```bash
+bin/rails server
+```
+
+Navigate to [http://localhost:3000/admin](http://localhost:3000/admin). Torque Admin automatically generates a dashboard root route, so the homepage renders immediately. Then visit [http://localhost:3000/admin/posts](http://localhost:3000/admin/posts) to see the streamed index view for your `Post` resource, complete with table, pagination, and action buttons.
+
+</Step>
+
+</Steps>
+
+## What You Just Built
+
+After completing these steps your application has:
+
+- An admin engine mounted at `/admin` with its own isolated routes and helpers
+- A `Post` resource registered with Torque Admin, available at `/admin/posts`
+- Full CRUD without a single action method written by hand
+- Streamed index and show pages delivered via Hotwire and `ActionController::Live`
+
+## Explore Further
+
+<CardGroup cols={2}>
+  <Card title="Resource Concepts" icon="database" href="/concepts/resources">
+    Understand how Torque Admin models resources, resolves controllers, and builds navigation entries from your route declarations.
+  </Card>
+  <Card title="Configuration Overview" icon="sliders" href="/configuration/overview">
+    Customise the theme, enable or disable streaming, configure authentication defaults, and tune parallel processing.
+  </Card>
+</CardGroup>

@@ -1,0 +1,203 @@
+---
+title: "Collection Controllers: Filter, Sort, Paginate, Scope"
+sidebarTitle: "Collection"
+description: "Filter, Scope, Sort, and Pagination sub-concerns chain through load_collection to build a composable pipeline for managing admin resource collections."
+---
+
+`CollectionController` is the concern responsible for loading and shaping the list of records shown in admin index pages and similar collection-backed views. Rather than implementing everything in one place, it is itself composed of four narrowly focused sub-concerns — `FilterController`, `ScopeController`, `SortController`, and `PaginationController` — each of which hooks into the same `load_collection` pipeline via Ruby's `super` chaining mechanism.
+
+## How the Pipeline Works
+
+Each sub-concern overrides `load_collection` to extract its own keyword argument, apply its transformation to the scope, and then call `super` to pass the (possibly modified) scope along to the next concern in line. The order of inclusion determines the order of application:
+
+```
+FilterController → ScopeController → SortController → PaginationController
+```
+
+Because `PaginationController` is included last, it is called first from `CollectionController#load_collection`'s perspective (Ruby's `super` chain runs innermost-last), ensuring pagination is **always the final step** applied to the scope. This means the page size and offset are calculated on the already-filtered, scoped, and sorted query.
+
+```
+CollectionController#load_collection
+  └─ PaginationController#load_collection  (last included, first to run)
+       └─ SortController#load_collection
+            └─ ScopeController#load_collection
+                 └─ FilterController#load_collection
+                      └─ (base, no super)
+```
+
+## The `collection` View Helper
+
+`CollectionController` exposes a `collection` helper method to views. It is memoised into an instance variable named after `RESOURCE.plural` (e.g. `@posts` for a `Post` resource):
+
+```ruby
+def collection
+  ivar = collection_ivar_name          # => :@posts
+  return instance_variable_get(ivar) if instance_variable_defined?(ivar)
+  instance_variable_set(ivar, load_collection)
+end
+
+def collection_ivar_name
+  :@#{RESOURCE.plural}
+end
+```
+
+Calling `collection` from a view or a standard action is sufficient for the vast majority of use cases; the entire pipeline runs exactly once per request.
+
+<Tip>
+You can pass keyword arguments directly to `load_collection` (or to `collection`) if you need to force specific pipeline options from a non-standard action method — for example, `collection(includes: :author, per_page: 5)`. The `includes:`, `preload:`, `eager_load:`, and `joins:` keys are extracted and applied after the pipeline completes, via a simple `inject` over the returned scope.
+</Tip>
+
+## `CollectionController#load_collection`
+
+This is the **entry point** of the pipeline and the method you call (or override) at the `CollectionController` level:
+
+```ruby
+def load_collection(scope = nil, **settings)
+  extras = settings.extract!(:includes, :preload, :eager_load, :joins)
+  scope  = super(scope || scoped_resource, **settings)
+  scope  = scope.strict_loading if admin_application_config.resource.default_strict_loading
+  extras.inject(scope) { |result, (method, value)| result.public_send(method, value) }
+end
+```
+
+Key behaviours:
+
+- Defaults `scope` to `scoped_resource` when none is provided.
+- Extracts `includes:`, `preload:`, `eager_load:`, and `joins:` before delegating to the sub-concern chain, then re-applies them afterwards so they do not interfere with filter/sort/paginate logic.
+- Appends `.strict_loading` when `admin_application_config.resource.default_strict_loading` is `true`, preventing N+1 queries at the ActiveRecord level.
+
+## FilterController
+
+`FilterController` overrides `load_collection` to conditionally apply filtering logic before passing the scope up the chain:
+
+```ruby
+def load_collection(scope, filter: default_filter_settings, **)
+  scope = filter_collection(scope, filter) if filter
+  super(scope, **)
+end
+```
+
+Override these protected methods in your controller to customise filtering behaviour:
+
+| Method | Purpose |
+|--------|---------|
+| `filter_collection(scope, settings)` | Apply filter settings to `scope`; return the filtered scope |
+| `default_filter_settings` | Return default filter settings when none are present in params |
+| `current_filter_value` | Read the current filter state (e.g. parsed from `params`) |
+
+## ScopeController
+
+`ScopeController` overrides `load_collection` to apply named scopes (e.g. "published", "archived") before delegating further:
+
+```ruby
+def load_collection(a_scope, scope: default_scope_settings, **)
+  a_scope = scope_collection(a_scope, scope) if scope
+  super(a_scope, **)
+end
+```
+
+Override these protected methods to add scope behaviour:
+
+| Method | Purpose |
+|--------|---------|
+| `scope_collection(scope, settings)` | Apply scope settings; return the scoped relation |
+| `default_scope_settings` | Return default scope when none is specified in params |
+| `current_scope_value` | Read the current active scope from params |
+
+## SortController
+
+`SortController` overrides `load_collection` to apply ordering before delegating to pagination:
+
+```ruby
+def load_collection(scope, sort: default_sort_settings, **)
+  scope = sort_collection(scope, sort) if sort
+  super(scope, **)
+end
+```
+
+Override these protected methods to add sort behaviour:
+
+| Method | Purpose |
+|--------|---------|
+| `sort_collection(scope, settings)` | Apply sort settings (column and direction); return ordered scope |
+| `default_sort_settings` | Return default sort when no sort params are present |
+| `current_sort_value` | Read the current sort state from params |
+
+## PaginationController
+
+`PaginationController` is the last concern applied in the chain, ensuring it always runs on a fully filtered, scoped, and sorted query:
+
+```ruby
+def load_collection(scope, paginate: default_pagination_settings, **)
+  scope = paginate_collection(scope, paginate) if paginate
+  super(scope, **)
+end
+```
+
+Override these protected methods for pagination:
+
+| Method | Purpose |
+|--------|---------|
+| `paginate_collection(scope, settings)` | Apply page/limit to `scope`; return paginated relation |
+| `default_pagination_settings` | Return default pagination (e.g. `{ page: 1, per: 25 }`) |
+| `current_pagination_value` | Read the current page state from params |
+
+## Customisation Examples
+
+### Filtering by status
+
+Override `filter_collection` in your resource controller to apply request-driven filtering:
+
+```ruby
+class Admin::PostsController < Admin::ApplicationController
+  include Torque::Admin::ResourceController
+
+  protected
+
+    def filter_collection(scope, settings)
+      scope = scope.where(status: params[:status]) if params[:status].present?
+      scope = scope.where("title ILIKE ?", "%#{params[:search]}%") if params[:search].present?
+      scope
+    end
+
+    def default_filter_settings
+      # Return a truthy value so filter_collection is always invoked,
+      # even when no filter params are present.
+      {}
+    end
+end
+```
+
+### Setting a default sort column
+
+Override `default_sort_settings` to return a hash describing the column and direction to use when the user has not specified a sort:
+
+```ruby
+class Admin::PostsController < Admin::ApplicationController
+  include Torque::Admin::ResourceController
+
+  protected
+
+    def default_sort_settings
+      { column: :published_at, direction: :desc }
+    end
+
+    def sort_collection(scope, settings)
+      column    = settings[:column]    || :created_at
+      direction = settings[:direction] || :asc
+      scope.order(column => direction)
+    end
+end
+```
+
+### Passing eager-load options from an action
+
+Use the `includes:` keyword when you need to eager-load associations for a specific non-standard action without affecting the default pipeline:
+
+```ruby
+def featured
+  @featured_posts = collection(includes: :author, joins: :tags)
+  # @featured_posts is now an ActiveRecord::Relation with authors
+  # eager-loaded and a JOIN on tags, after filtering/sorting/paginating.
+end
+```

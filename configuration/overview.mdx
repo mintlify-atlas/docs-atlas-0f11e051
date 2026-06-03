@@ -1,0 +1,280 @@
+---
+title: "Configuring Torque Admin: All Available Options"
+sidebarTitle: "Overview"
+description: "Reference for every Torque Admin config option: title, theme, namespace isolation, base controller, auth defaults, and parallel processing settings."
+---
+
+Torque Admin is configured through a block-based API that mirrors the familiar Rails initializer pattern. Every option has a sensible default, so you only need to specify the settings that differ from what is shown in `DEFAULT_CONFIG`. Configuration can happen in an initializer file or directly inside the `mount` block in your `routes.rb`.
+
+<Note>
+  Place your configuration in `config/initializers/torque_admin.rb` **before** the engine mounts, or use the inline `configure` block available on the `mount` call in `routes.rb`. Either location works — the initializer approach is recommended when you have many options to set.
+</Note>
+
+## Configuration Methods
+
+For the **default** admin application, call:
+
+```ruby
+Torque::Admin.configure do |config|
+  config.theme = 'bootstrap'
+  config.default_authenticated = true
+end
+```
+
+For a **named** admin application (when you mount more than one), call:
+
+```ruby
+Torque::Admin[:staff].configure do |config|
+  config.theme = 'bulma'
+  config.parent_module = 'Staff'
+end
+```
+
+---
+
+## All Configuration Options
+
+### `title`
+
+<ParamField body="title" type="nil | String | Proc | Symbol" default="nil">
+  The display title of the admin application shown in the page header and browser tab.
+
+  - `nil` — falls back to the application name derived from the mount name (e.g. `"Admin"`)
+  - `String` — rendered as plain text
+  - `Proc` — the return value is rendered as raw HTML, giving you full control over markup
+  - `Symbol` — treated as a helper method name; the helper is called and its return value is used
+
+  ```ruby
+  # Plain string
+  config.title = "Acme Admin"
+
+  # Proc returning HTML
+  config.title = -> { tag.span("Acme", class: "brand") + " Admin" }
+
+  # Symbol — calls the helper method `custom_admin_title`
+  config.title = :custom_admin_title
+  ```
+</ParamField>
+
+---
+
+### `root_path`
+
+<ParamField body="root_path" type="nil | String" default="nil">
+  The URL root path at which the admin engine is mounted.
+
+  When `nil`, Torque Admin automatically reads the path from the `mount` call in `routes.rb` and sets it for you. You only need to set this manually if you need to reference the path before routes are loaded, or if you mount the engine with a non-standard helper.
+
+  ```ruby
+  config.root_path = "/backend"
+  ```
+</ParamField>
+
+---
+
+### `parent_module`
+
+<ParamField body="parent_module" type="String" default="'Object'">
+  The name of the Ruby module under which the admin application's own module will be defined.
+
+  `'Object'` means top-level scope, so a default admin app becomes the module `Admin`. Set this to nest the engine under an existing namespace — for example `'MyApp'` would create `MyApp::Admin`.
+
+  ```ruby
+  config.parent_module = 'BackOffice'
+  # Creates BackOffice::Admin module
+  ```
+</ParamField>
+
+---
+
+### `stream_actions`
+
+<ParamField body="stream_actions" type="Boolean" default="true">
+  Controls whether heavy listing actions such as `index` and dashboard pages use HTTP streaming by default.
+
+  Streaming lets the browser start rendering while the server is still generating content, which improves perceived performance for pages with many records. Set to `false` to disable streaming globally and render responses in the traditional buffered way.
+
+  ```ruby
+  config.stream_actions = false
+  ```
+</ParamField>
+
+---
+
+### `parallel_processing_with`
+
+<ParamField body="parallel_processing_with" type=":concurrent_ruby | :async | false" default=":concurrent_ruby">
+  The concurrency back-end used to parallelise heavy operations (such as aggregating dashboard data or loading multiple widgets at once).
+
+  | Value | Behaviour |
+  |---|---|
+  | `:concurrent_ruby` | Uses the `concurrent-ruby` gem's thread-pool primitives |
+  | `:async` | Uses the `async` gem and its Fiber-based scheduler |
+  | `false` | Disables parallel processing entirely; work is done sequentially |
+
+  ```ruby
+  config.parallel_processing_with = :async
+  ```
+</ParamField>
+
+---
+
+### `isolate_namespace`
+
+<ParamField body="isolate_namespace" type="nil | true | false" default="nil">
+  Determines the degree of namespace isolation applied to the admin engine.
+
+  | Value | Behaviour |
+  |---|---|
+  | `nil` | **Hybrid** — helpers and routes are isolated, but model naming is not relative. This is the recommended default for most applications. |
+  | `true` | **Full isolation** — behaves like a fully isolated Rails engine (`isolate_namespace` in the engine). Models, helpers, routes, and URL helpers are all scoped. |
+  | `false` | **No isolation** — the admin module is defined in the parent namespace with no isolation at all. |
+
+  ```ruby
+  # Full Rails engine isolation
+  config.isolate_namespace = true
+  ```
+</ParamField>
+
+---
+
+### `base_controller`
+
+<ParamField body="base_controller" type="String" default="'ApplicationController'">
+  The name of the host application controller that the admin engine's own `TAController` will inherit from.
+
+  Provide a string (not the constant itself) to avoid triggering an eager load of the constant before the application has fully booted. This is the primary way to inherit authentication, `before_action` hooks, and concerns you have already set up in your main app.
+
+  ```ruby
+  config.base_controller = 'Admin::BaseApplicationController'
+  ```
+</ParamField>
+
+---
+
+### `default_authenticated`
+
+<ParamField body="default_authenticated" type="Boolean" default="true">
+  Whether every admin route requires authentication unless explicitly marked otherwise.
+
+  When `true`, all routes generated inside the admin engine inherit `authenticated: true` in their annotations. Individual route scopes can override this with `unauthenticated { ... }` in your route definitions. Set to `false` to make all routes public by default — useful during development, but **not recommended for production**.
+
+  ```ruby
+  config.default_authenticated = false
+  ```
+</ParamField>
+
+---
+
+### `theme`
+
+<ParamField body="theme" type="String" default="'tailwind'">
+  The CSS framework theme used to render admin UI components.
+
+  Accepted values: `'tailwind'`, `'bootstrap'`, `'bulma'`, `'semantic_ui'`.
+
+  Each value maps to a corresponding helpers module (`Elements::Helpers::Bootstrap`, `::Bulma`, `::SemanticUI`) that defines all component primitives via the Elements DSL. You must include the chosen framework's CSS yourself in your application layout.
+
+  ```ruby
+  config.theme = 'semantic_ui'
+  ```
+</ParamField>
+
+---
+
+### `theme_extensions`
+
+<ParamField body="theme_extensions" type="Array<Proc | Module | String>" default="[]">
+  A list of extensions to apply on top of the base theme's `UiBuilder` class.
+
+  Each entry may be:
+  - A **Proc** — executed in the context of the `UiBuilder` class, allowing you to call `define`, `associate`, and other DSL methods directly.
+  - A **Module** — included into the `UiBuilder` class so you can override or add helper methods.
+  - A **String** — a module name that will be constantized and then included.
+
+  Extensions are applied in array order, so later entries can override earlier ones.
+
+  ```ruby
+  config.theme_extensions = [
+    MyAdmin::ThemeOverrides,        # Module
+    ->(b) { b.define(:my_widget) }, # Proc
+    'MyAdmin::ExtraHelpers',        # String (constantized at boot)
+  ]
+  ```
+</ParamField>
+
+---
+
+### `elements_lookup_context`
+
+<ParamField body="elements_lookup_context" type="Array<String>" default="['Object', 'Torque::Admin']">
+  An ordered list of module name strings that are searched when resolving element helpers (e.g. custom `define`-d components).
+
+  The lookup happens **in reverse order** — the last module in the array is checked first. Torque Admin automatically appends the admin application's own module to this list at initialization, so your app-level elements always take precedence over the built-in ones.
+
+  ```ruby
+  config.elements_lookup_context = ['Object', 'Torque::Admin', 'MyApp::AdminElements']
+  ```
+</ParamField>
+
+---
+
+### `resources.default_strict_loading`
+
+<ParamField body="resources.default_strict_loading" type="Boolean" default="false">
+  Whether ActiveRecord strict loading is enabled by default for all resources managed by the admin application.
+
+  Strict loading raises an error when an association is accessed without being eagerly loaded, helping you catch N+1 queries during development. Set to `true` to enable it globally; you can still opt individual resources out.
+
+  ```ruby
+  config.resources.default_strict_loading = true
+  ```
+</ParamField>
+
+---
+
+## Complete Configuration Example
+
+The following shows all options together in a typical initializer:
+
+```ruby
+# config/initializers/torque_admin.rb
+
+Torque::Admin.configure do |config|
+  # Branding
+  config.title = "Acme Admin"
+
+  # Namespace
+  config.parent_module = 'Object'
+  config.isolate_namespace = nil   # hybrid (default)
+
+  # Controllers
+  config.base_controller = 'ApplicationController'
+
+  # Routing & auth
+  config.root_path = nil           # read from mount call
+  config.default_authenticated = true
+
+  # Performance
+  config.stream_actions = true
+  config.parallel_processing_with = :concurrent_ruby
+
+  # UI
+  config.theme = 'semantic_ui'
+  config.theme_extensions = [MyAdmin::ThemeOverrides]
+  config.elements_lookup_context = ['Object', 'Torque::Admin']
+
+  # Resources
+  config.resources.default_strict_loading = false
+end
+```
+
+For a named application (e.g. a separate staff portal):
+
+```ruby
+Torque::Admin[:staff].configure do |config|
+  config.title  = "Staff Portal"
+  config.theme  = 'bootstrap'
+  config.parent_module = 'Staff'
+end
+```

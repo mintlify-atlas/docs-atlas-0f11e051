@@ -1,0 +1,200 @@
+---
+title: "Custom Elements: Extending the Torque Admin DSL"
+sidebarTitle: "Custom Elements"
+description: "Build reusable UI components in Torque Admin by subclassing BaseElement, defining DSL properties and presets, and rendering through the UiBuilder pipeline."
+---
+
+Elements are the primary building block for Torque Admin's UI layer. Rather than scattering markup across view templates, an element encapsulates a **logical component definition** — its nodes, properties, and rendering instructions — completely separately from the HTML output. This decoupling lets you reuse, extend, or theme the same structural description across different controllers and UI frameworks without duplicating template code.
+
+## The Element Hierarchy
+
+Every element ultimately subclasses `Torque::Elements::Base`, which composes four core concerns:
+
+| Concern | Responsibility |
+|---|---|
+| `Core::Definition` | Lifecycle (`initiated` → `loading` → `loaded` → `rendering` → `rendered`) and lazy config |
+| `Core::Nodes` | Tree of `Node` objects; `traverse`, `move`, `append_node`, etc. |
+| `Core::Helpers` | i18n text resolution, option sanitisation |
+| `Core::Render` | `render_in` pipeline — triggers load → render → produces HTML |
+
+The gem ships two concrete element classes in `app/elements/`:
+
+- **`Torque::Admin::BaseElement`** — the direct ancestor for admin elements; adds `placement` to `element_settings`.
+- **`Torque::Admin::MenuElement`** — a `BaseElement` subclass with full menu-item, divider, icon, and current-page detection logic built in.
+
+Your custom elements should subclass `BaseElement` (or any other admin element class) rather than `Torque::Elements::Base` directly.
+
+## How Element Resolution Works
+
+The config option `elements_lookup_context` holds an **ordered list of module names** that the engine searches when resolving an element class. Lookup happens **in reverse order**, so the last entry wins — meaning modules added by your application shadow gem-level element definitions.
+
+The default lookup context for every new application is:
+
+```ruby
+['Object', 'Torque::Admin']
+```
+
+Your application's namespace module is automatically appended during application setup:
+
+```ruby
+# Inside Application#setup_additional_config (runs at boot)
+@config.elements_lookup_context << mod.name  # e.g. 'Admin'
+```
+
+So a class named `Admin::MyWidgetElement` will shadow `Torque::Admin::MyWidgetElement` if both exist, because `'Admin'` is searched first.
+
+<Tip>
+If you place your custom element class inside a module that is **not** already in `elements_lookup_context`, the engine will not find it. Either use your application's top-level namespace (e.g. `Admin::`) or explicitly append your module: `config.elements_lookup_context << 'MyNamespace'` in your application config.
+</Tip>
+
+## Creating a Custom Element
+
+### Step 1 — Subclass BaseElement
+
+Create a file in `app/elements/` of your Rails application:
+
+```ruby
+# app/elements/stat_card_element.rb
+
+class StatCardElement < BaseElement
+  # Declare the logical type — used by the renderer to find the right helper
+  def type
+    :stat_card
+  end
+
+  # Optional: add element-level settings extracted from root node options
+  def element_settings
+    super + %i[trend sparkline]
+  end
+end
+```
+
+### Step 2 — Register it on a controller
+
+Use `element` (defined by the controller concern) to attach the element definition and its config block to a specific action context:
+
+```ruby
+class Admin::DashboardController < Admin::BaseController
+  include Admin::DashboardController
+
+  element :revenue_card, of_type: :stat_card, class: 'card--revenue' do |b|
+    b.preset(:default, as: 'div', class: 'stat-card')
+    b.property(:trend).formats(:class, 'trend--%s')
+  end
+end
+```
+
+You can also share one element definition across several action names using `alias_element`:
+
+```ruby
+# Defined in ResourceController automatically for forms:
+alias_element :primary_form, :new_form, :create_form, :edit_form, :update_form
+```
+
+Use the same pattern in your own controllers to avoid duplicating config blocks.
+
+## The Lazy Config Lifecycle
+
+An element's config block is **not executed at definition time**. The call sequence is:
+
+1. `element(name, of_type:, ...)` — stores the class and options; no instantiation yet.
+2. First access via `elements[:revenue_card]` — the `Registry` instantiates the class.
+3. `render_in(view_context)` is called from the template — this triggers:
+   - `load_config!` — executes the stored `@config` block (only once; guarded by `loaded?`).
+   - Marks state as `rendering` then `rendered`.
+   - Calls `render_node(root)` to produce the final HTML string.
+
+This means element definitions are safe to declare at class load time even though the view context is not available until the request.
+
+## Node Structure
+
+Inside a config block, nodes are built through the `Core::Nodes` API. The `Core::Index` concern provides `[]`, `fetch`, and `key?` for node lookup by identifier. Nodes can be positioned relative to each other:
+
+```ruby
+element :sidebar_menu, of_type: :menu do |b|
+  b.item(:dashboard, 'Dashboard', root_path)
+  b.item(:users, 'Users', admin_users_path)
+  b.divider
+  b.item(:settings, 'Settings', admin_settings_path, insert_after: :users)
+end
+```
+
+Supported positioning options: `insert_after:`, `insert_before:`, `prepend_to:`, `append_to:`.
+
+## DSL Properties Reference
+
+Inside a config block passed to `define` (UiBuilder framework helpers) or an element config block, you have access to the full DSL:
+
+| Method | Purpose |
+|---|---|
+| `b.argument(:name)` | Positional argument; often `assigns(:class)` or `assigns(:data_x)` |
+| `b.property(:color)` | Named keyword; chainable with `.formats`, `.maps`, `.applies`, `.assigns` |
+| `b.toggles(:active, :disabled)` | Boolean flags — each adds a CSS class matching the toggle name when truthy |
+| `b.imports(:icon, :size)` | Pulls in a shared property definition from the framework's import registry |
+| `b.preset(:name, as: 'div', class: 'my-class')` | Named visual variant; selected at render time with `fetch_presets(:variant, from: :element_name)` |
+
+### Preset example from Bootstrap elements
+
+```ruby
+# Defined in lib/torque/elements/helpers/bootstrap/elements.rb
+define :button do |b|
+  b.preset(:default, as: 'button', class: 'btn')
+
+  b.property(:color).formats(:class, 'btn-%s')
+  b.property(:size).maps(sm: 'btn-sm', lg: 'btn-lg').assigns(:class)
+  b.property(:outline).formats(:class, 'btn-outline-%s')
+  b.property(:disabled).applies(disabled: true)
+
+  b.imports(:icon)
+end
+```
+
+## UiBuilder and Framework Integration
+
+Elements call UiBuilder helpers (`ui.button(...)`, `ui.menu(...)`, etc.) to produce framework-specific HTML. The `UiBuilder` class maintains a registry of framework-aware subclasses:
+
+```ruby
+# Register a completely new framework (e.g. a custom Tailwind variant)
+Torque::Elements::UiBuilder.add_framework(:my_theme, MyTheme::Elements)
+```
+
+`add_framework` accepts a module that is a `HelperConstructor`-extended module — the same pattern used by the built-in `:bootstrap` and `:semantic_ui` frameworks. The method creates a new `Class.new(UiBuilder)` and includes the module, then stores it under the normalised framework name.
+
+When the admin application boots it selects its framework via the `theme:` config option and calls `UiBuilder.add_framework` internally, wiring the resulting class to the application's `ui_builder` accessor.
+
+## Minimal Custom Element Example
+
+```ruby
+# app/elements/kpi_card_element.rb
+class KpiCardElement < BaseElement
+  def type = :kpi_card
+
+  def element_settings
+    super + %i[sparkline currency]
+  end
+end
+```
+
+```ruby
+# app/controllers/admin/overview_controller.rb
+class Admin::OverviewController < Admin::BaseController
+  include Admin::DashboardController
+
+  element :revenue_kpi, of_type: :kpi_card, sparkline: true, currency: :usd do
+    # Config block executed lazily on first render
+    preset(:default, as: 'div', class: 'kpi-card')
+    property(:currency).maps(usd: '$', eur: '€').assigns(:data_symbol)
+  end
+
+  def index
+    @revenue = Revenue.monthly_total
+  end
+end
+```
+
+```erb
+<%# app/templates/admin/overview/index.html.erb %>
+<%= elements[:revenue_kpi].render_in(self) do |kpi| %>
+  <%= number_to_currency(@revenue) %>
+<% end %>
+```

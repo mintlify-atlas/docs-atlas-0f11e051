@@ -1,0 +1,152 @@
+---
+title: "Torque Admin Application: Engine and Namespace Overview"
+sidebarTitle: "Application"
+description: "Understand how Application bundles a Rails Engine, config object, and Ruby module into a single admin instance you can mount and configure independently."
+---
+
+Every Torque Admin portal is represented by an `Application` object. It binds together a dynamically generated Rails `Engine` subclass, an `ActiveSupport::InheritableOptions` config struct, and a Ruby module that acts as the isolated namespace for all of the admin's controllers, resources, and helpers. Most applications only need a single instance — the `:default` one — but the design supports any number of independent admin portals inside the same Rails process.
+
+## Accessing an Application
+
+The `Torque::Admin[]` factory method is the canonical entry point. Calling it with the same name always returns the same object; calling it with a new name provisions a fresh, fully isolated instance.
+
+```ruby
+# The default application (name resolves to :admin internally)
+Torque::Admin[:default]   # => #<Torque::Admin::Application name=:default ...>
+
+# Shorthand — delegates straight to Torque::Admin[:default].configure
+Torque::Admin.configure { |c| c.title = 'My Admin' }
+
+# A second, independent instance (e.g. for a partner portal)
+Torque::Admin[:partner]   # => #<Torque::Admin::Application name=:partner ...>
+```
+
+The `[]` method is defined as:
+
+```ruby
+# lib/torque/admin.rb
+def [](name)
+  instances[name.to_sym] ||= Application.new(name)
+end
+```
+
+Each stored instance is kept in `Torque::Admin.instances`, a simple hash keyed by symbol.
+
+## Application Attributes
+
+An `Application` exposes five public readers once initialized:
+
+| Attribute | Type | Description |
+|---|---|---|
+| `name` | `Symbol` | Canonical name (`:default` becomes `:admin`) |
+| `config` | `ActiveSupport::InheritableOptions` | Deep-duplicated copy of `DEFAULT_CONFIG` |
+| `engine` | `Class < Torque::Admin::Engine` | Dynamically generated Rails Engine subclass |
+| `mod` | `Module` | Ruby namespace module (e.g. `Admin`, `Partner`) |
+| `auth_resources` | `Hash` | Map of resource name → authentication provider |
+
+## Configuring the Application
+
+Pass a block to `configure` and mutate the config object directly. All options accept the values documented in the config source, and the block is yielded synchronously — there is no deferred evaluation.
+
+```ruby
+# config/initializers/torque_admin.rb
+Torque::Admin.configure do |c|
+  c.title           = 'Acme Admin'
+  c.theme           = 'bootstrap'
+  c.stream_actions  = true
+  c.base_controller = 'ApplicationController'
+  c.isolate_namespace = nil   # hybrid mode — default
+end
+```
+
+<ParamField body="title" type="String | Proc | Symbol" default="nil">
+  Displayed name of the admin portal. A plain string is rendered as text; a `Proc` is called and its return value is rendered as HTML; a `Symbol` invokes the named helper method. Defaults to the application name titleized.
+</ParamField>
+
+<ParamField body="root_path" type="String" default="nil">
+  Root URL path at which the engine is mounted (e.g. `"admin"`). When `nil`, the value is inferred from the `path:` or `at:` option passed to the `admin` route helper at mount time.
+</ParamField>
+
+<ParamField body="theme" type="String" default='"tailwind"'>
+  Name of the CSS framework adapter to use. Supported values are `"bootstrap"`, `"bulma"`, `"semantic_ui"`, and `"tailwind"`. The chosen adapter is loaded lazily when `ui_builder` is first accessed.
+</ParamField>
+
+<ParamField body="stream_actions" type="Boolean" default="true">
+  When `true`, heavy actions such as `index` are rendered via `ActionController::Live` streaming, flushing each section of the page as it becomes ready. Set to `false` to disable streaming globally.
+</ParamField>
+
+<ParamField body="isolate_namespace" type="Boolean | nil" default="nil">
+  Controls how the admin module is isolated. `nil` (default) applies a hybrid approach — isolated helpers and routes but not relative model naming. `true` is a fully isolated Rails namespace. `false` skips isolation entirely.
+</ParamField>
+
+<ParamField body="base_controller" type="String" default='"ApplicationController"'>
+  String name of the host application controller that becomes the superclass of the admin's generated `BaseController`. Provide a string to avoid eagerly loading the constant.
+</ParamField>
+
+## Application Lifecycle
+
+```
+Application.new(name)
+  └─ config = DEFAULT_CONFIG.deep_dup
+  └─ engine = Engine.build(self)
+  └─ mod    = setup_application_module
+  └─ clear          # zeroes resources, ui_builder, lazy constants
+  └─ setup_additional_config  # sets title default, elements_lookup_context, etc.
+         │
+         ▼
+  application.configure { |c| ... }   # called from initializer
+         │
+         ▼
+  Routes drawn (admin do...end block in routes.rb)
+  └─ engine mounted via mount_admin_engine
+  └─ routes.append { app.finalize_routes! }
+         │
+         ▼
+  finalize_routes!
+  └─ auto_dashboard_route  (injects a default root → DashboardController#index)
+```
+
+`finalize_routes!` is appended to the engine's route set during the `admin` helper call, so it runs automatically at boot after all resource routes have been declared.
+
+## Namespace Module and Lazy Constants
+
+`setup_application_module` creates (or reuses) a module at `Object::Admin` (for the default app), then extends it with `Application::LazyModules`. That module intercepts `const_missing` to build the following constants on first access:
+
+| Constant | Built as |
+|---|---|
+| `Admin::Resource` | `Class.new(Torque::Admin::Resource)` |
+| `Admin::BaseController` | Inherits from `config.base_controller`, includes `BaseController` concern |
+| `Admin::ResourceController` | Inherits from `BaseController`, includes `ResourceController` |
+| `Admin::DashboardController` | Inherits from `BaseController`, includes `DashboardController` |
+| `Admin::SimpleController` | Inherits from `ResourceController`, includes `SimpleController` |
+
+This means none of these classes exist in memory until something references them, keeping boot time low.
+
+## The `clear` Method
+
+`clear` is the reset hook. It empties the resource registry, drops the cached `ui_builder` and `base_controller`, unmounts the engine flag, and removes all lazy constants from the namespace module.
+
+```ruby
+application.clear
+# @resources      => {}
+# @auth_resources => {}
+# @ui_builder     => nil
+# engine.mounted  => false
+# Admin::Resource, Admin::BaseController, etc. are removed
+```
+
+In development mode, `clear` is registered as a `before_class_unload` callback so the admin resets cleanly before Rails reloads the application code:
+
+```ruby
+# inside setup_additional_config
+ActiveSupport::Reloader.before_class_unload(&method(:clear))
+```
+
+## Inspecting an Application
+
+```ruby
+Torque::Admin[:default].inspect
+# => "#<Torque::Admin::Application name=:default engine=Admin::Engine resources=3>"
+```
+
+The inspect output surfaces the three things you most often need to verify during debugging: which named instance you're looking at, the generated engine constant, and how many resources have been registered so far.

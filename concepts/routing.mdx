@@ -1,0 +1,270 @@
+---
+title: "Admin Routing DSL: Resources, Dashboards, and Auth"
+sidebarTitle: "Routing"
+description: "Explore Torque Admin's routing DSL — the admin helper, resource declarations, dashboard routes, sections, widgets, custom actions, and authentication hooks."
+---
+
+Torque Admin extends `ActionDispatch::Routing::Mapper` through the `Torque::Admin::Routing` module, which is mixed into your application's route set during engine initialization. All admin routes live inside a single `admin` block in `config/routes.rb`. That block mounts the engine once (transparently), opens a custom `Mapper` scope, and passes control to an extended DSL that gives you resource declarations, dashboard helpers, sidebar sections, custom actions, widget slots, and authentication directives — all with automatic route annotations.
+
+## The `admin` Helper
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  admin :default, '/admin' do
+    # all admin routes go here
+  end
+end
+```
+
+`admin(name, path, **options, &block)` does three things:
+
+1. Calls `mount(app.engine, at: path, as: name)` on the host application's route set (only on the first call).
+2. Clears the engine's existing routes and appends a `finalize_routes!` callback that auto-injects a dashboard root.
+3. Opens the engine's route set inside a `Mapper` instance with the correct default scope and yields the block.
+
+The `name` parameter (default `:default`) selects the `Torque::Admin` application instance. Subsequent `admin` calls for the same name re-open the same engine route set without remounting it, making it safe to split routes across multiple files.
+
+## Inside the Block: the Custom Mapper
+
+Inside the `admin` block you are inside a `Torque::Admin::Mapper`, which is a subclass of `ActionDispatch::Routing::Mapper` augmented with four modules: `Scoping`, `Resources`, `Dashboards`, and `Authentication`. Each module adds specific DSL methods described below.
+
+### `resources` — Plural Resource Routes
+
+```ruby
+resources :posts
+resources :comments, actions: [:approve], widgets: [:quick_view], source: :comment
+```
+
+Registers the full set of plural admin routes. Default actions for a plural resource are:
+
+```
+index  search  new  create  upsert  show  preview  edit  update  destroy
+```
+
+| Option | Type | Description |
+|---|---|---|
+| `actions:` | `Array<Symbol>` | Additional custom actions to draw (see `actions` helper below) |
+| `widgets:` | `Array<Symbol>` | Widget GET routes to register on the collection |
+| `source:` | `Symbol` | Overrides the singular name used to look up the resource class |
+
+### `resource` — Singleton Resource Routes
+
+```ruby
+resource :profile
+resource :settings, actions: [:reset]
+```
+
+Registers a singleton admin resource. Default actions are:
+
+```
+new  create  show  preview  edit  update  destroy
+```
+
+The `actions:` and `widgets:` options work identically to the plural form.
+
+### `dashboard` — Dashboard Routes
+
+```ruby
+dashboard                            # root dashboard at /
+dashboard :reports, partials: [:summary, :traffic]
+```
+
+`dashboard(path, partials:)` creates a root GET route handled by `DashboardController#index`. When `partials:` is supplied, additional GET routes are registered for each partial name, letting the frontend stream individual dashboard sections. The optional `path` argument scopes the dashboard under a sub-path.
+
+### `section` — Sidebar Grouping
+
+```ruby
+section :content do
+  resources :posts
+  resources :pages
+end
+
+section :settings do
+  resources :users
+end
+```
+
+`section(name)` wraps its block in a path and `as:` scope, and sets the `:section` annotation on every route inside. Resources that appear inside a section have that section name registered in `resource.sections`, enabling the admin's menu element to render sidebar groupings correctly.
+
+### `widgets` — Widget Slot Routes
+
+```ruby
+resources :orders do
+  widgets :summary_card, :timeline, on: :member
+  widgets :totals_chart, on: :collection
+end
+```
+
+`widgets(*list, action:, on:)` registers GET routes for each name in `list`. The `on:` option accepts `:member` or `:collection`; when omitted it infers the correct scope from the surrounding context. Widgets are tracked separately from actions in the resource's `widgets` hash.
+
+### `actions` and `action` — Custom Action Routes
+
+```ruby
+resources :posts do
+  actions :publish, :archive             # PATCH member actions
+  actions :bulk_delete, on: :collection  # can be scoped explicitly
+  action  :preview_email, view: true     # GET + PATCH pair
+end
+```
+
+`actions(*list, view:, via:)` registers custom routes against the resource:
+
+| Option | Default | Description |
+|---|---|---|
+| `via:` | `:patch` | HTTP verb for the action |
+| `view:` | `false` | When `true`, registers both a GET (for the form) and the primary verb |
+| `add_alias:` | `false` | Creates a named route alias matching the collection name |
+
+Routes drawn with `actions` are annotated with `type: :action` and appear in `resource.actions`.
+
+### `with_actions` / `without_actions` — Default Action Filtering
+
+```ruby
+without_actions :destroy, :upsert do
+  resources :read_only_posts
+end
+
+with_actions :export do
+  resources :invoices
+end
+```
+
+These scope helpers adjust the set of actions applied to every `resources` or `resource` call inside the block, without requiring per-resource `except:` options.
+
+### `authenticate` — Resource Authentication
+
+```ruby
+authenticate :admin_user, with: :devise
+authenticate :api_key, with: :custom do
+  # custom block is evaluated as standard Rails routes
+  post '/sessions', to: 'sessions#create'
+end
+```
+
+`authenticate(resource, with:)` marks a resource as an authentication source and registers it with the application via `authenticable_resource!`. Supported providers are `:rails`, `:custom`, and `:devise`. The `:devise` provider automatically delegates to `devise_for` inside an `external` scope.
+
+### `unauthenticated` — Opt-Out of Authentication
+
+```ruby
+unauthenticated do
+  resource :password_reset
+end
+```
+
+Sets `authenticated: false` on every route drawn in the block. The admin's authentication logic reads this annotation from `route_annotation(:authenticated)` and skips the authentication check for matching actions.
+
+### `searchable` — Lightweight Search Routes
+
+```ruby
+searchable :tags, :categories
+```
+
+`searchable(*resources)` registers a lightweight resource scope with only a `GET :search` route on the collection. This is useful for resources that are only needed to populate autocomplete or filter dropdowns but do not need full CRUD management.
+
+### `external` — Escape to Standard Rails Routing
+
+```ruby
+admin do
+  external do
+    devise_for :users   # plain Rails routing, no admin mapper
+  end
+end
+```
+
+`external` temporarily exits the admin mapper scope and yields to a standard `ActionDispatch::Routing::Mapper`, letting you draw regular Rails routes from inside an `admin` block without admin-specific annotations.
+
+## Route Annotations
+
+Every route drawn by the admin mapper carries annotations that are available at request time via `route_annotation(key)` in any admin controller:
+
+| Annotation | Type | Description |
+|---|---|---|
+| `:admin_application` | `Application` | The owning admin application instance |
+| `:authenticated` | `Boolean` | Whether the route requires authentication |
+| `:resource` | `Resource \| nil` | The resource object for resource-scoped routes |
+| `:section` | `Symbol \| nil` | Sidebar section the route belongs to |
+| `:type` | `Symbol` | Route kind (`:action`, `:widget`, `:dashboard`, etc.) |
+| `:nesting` | `Hash \| nil` | Parent resource param → controller mapping for nested routes |
+| `:param` | `Symbol` | URL parameter used to look up the record (e.g. `:id`) |
+
+## Comprehensive Example
+
+<CodeGroup>
+
+```ruby routes.rb (with sections)
+# config/routes.rb
+Rails.application.routes.draw do
+  admin :default, '/admin' do
+
+    authenticate :admin_user, with: :devise
+
+    dashboard partials: [:kpi_summary, :recent_activity]
+
+    section :content do
+      resources :posts do
+        actions :publish, :unpublish
+        widgets :engagement_chart, on: :member
+      end
+
+      resources :pages, without_actions: [:upsert]
+      searchable :tags
+    end
+
+    section :commerce do
+      resources :orders, actions: [:ship, :refund] do
+        widgets :fulfillment_status, on: :member
+        widgets :revenue_chart,      on: :collection
+      end
+
+      resource  :store_settings
+    end
+
+    section :access do
+      resources :users do
+        actions :impersonate, view: true
+      end
+
+      unauthenticated do
+        resource :password_reset
+      end
+    end
+
+  end
+end
+```
+
+```ruby routes.rb (flat, no sections)
+# config/routes.rb
+Rails.application.routes.draw do
+  admin :default, '/admin' do
+
+    authenticate :admin_user, with: :devise
+
+    dashboard
+
+    resources :posts
+    resources :pages
+    resources :orders
+    resources :users
+    resource  :store_settings
+    searchable :tags
+
+  end
+end
+```
+
+</CodeGroup>
+
+## How the Mapper Injects Route Annotations
+
+Internally, the custom `Scope` class overrides `annotate!` to merge annotations into the route's options hash just before `ActionDispatch::Routing::Mapping.build` finalizes the route. This means annotations are stored directly in `route.defaults[:annotations]` and are always accessible through the standard routing pipeline — no middleware or thread-local state required.
+
+```ruby
+# Reading an annotation inside any admin controller action:
+def index
+  resource   = route_annotation(:resource)
+  section    = route_annotation(:section)
+  auth_required = route_annotation(:authenticated)
+end
+```

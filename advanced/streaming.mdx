@@ -1,0 +1,153 @@
+---
+title: "Hotwire Streaming in Torque Admin: Async Rendering"
+sidebarTitle: "Streaming"
+description: "How Torque Admin streams HTTP responses with ActionController::Live, runs parallel async tasks, and lets you enable or disable streaming per controller."
+---
+
+Torque Admin uses `ActionController::Live` to stream HTTP responses for pages that are computationally expensive to render — such as index listings with many associations or dashboards with aggregated statistics. Rather than holding the full response in memory and flushing it all at once, the engine writes output to the client progressively, allowing the browser to begin rendering before the server has finished processing.
+
+## How StreamController Works
+
+`Torque::Admin::StreamController` is an `ActiveSupport::Concern` that powers the streaming behaviour. It is **included automatically** by both `ResourceController` and `DashboardController`, so you do not need to add it yourself to standard resource controllers.
+
+When the concern is included in a controller, it performs a careful alias dance at include time:
+
+```ruby
+# Happens automatically inside the `included` block
+alias_method :process_sync, :process   # save the original non-streaming process
+include ActionController::Live          # redefines process with streaming support
+alias_method :process_async, :process  # save the streaming version
+alias_method :process, :process_properly  # install the dispatch router
+```
+
+The installed `process_properly` method inspects `async_action?` and delegates to either `process_async` (streaming) or `process_sync` (standard Rails), keeping the streaming entirely transparent to the rest of the controller stack.
+
+### Thread-local key
+
+The concern uses the thread-local key `StreamController::Key` — defined as the symbol `:'torque@async'` — to track every async process spawned on the current thread. This key is initialised to an empty array before the action runs and set back to `nil` in an `ensure` block after all futures are collected.
+
+```ruby
+Torque::Admin::StreamController::Key  # => :'torque@async'
+```
+
+## Opting Actions into Streaming
+
+The class method `stream_from_actions` registers action names that should use the streaming pipeline:
+
+```ruby
+stream_from_actions(:index, :show)
+```
+
+`ResourceController` calls this automatically when the application-level `stream_actions: true` config is set:
+
+```ruby
+# Inside ResourceController's included block (runs automatically):
+stream_from_actions :index, :show if admin_application.config.stream_actions
+```
+
+`DashboardController` does the same for its `:index` action.
+
+The protected instance method `async_action?` answers whether the current dispatch should stream:
+
+```ruby
+def async_action?(name = nil)
+  (name.nil? && !Thread.current[Key].nil?) || stream_actions.include?((name || action_name).to_s)
+end
+```
+
+## Parallel Processing Inside an Action
+
+Within a streaming action you can fork work into background tasks using `initialize_async_process`. The block you pass is executed in parallel; the response stream stays open while all tasks run.
+
+```ruby
+def show
+  initialize_async_process do
+    # Expensive query — runs concurrently while the rest of show renders
+    @report_data = ReportService.call(params[:id])
+  end
+
+  # Other synchronous rendering continues here immediately
+end
+```
+
+The engine supports two parallel backends, selected by `parallel_processing_with:` in your application config:
+
+| Config value | Backend |
+|---|---|
+| `:concurrent_ruby` (default) | `Concurrent::Future.execute` |
+| `:async` | The `Async` gem's `Async {}` block |
+| `false` | Disabled — the block runs inline (no parallelism) |
+
+Each `concurrent_ruby` future runs the block inside `ActiveSupport::IsolatedExecutionState.share_with(t1, &block)`, where `t1` is the parent thread — preserving request-local state such as `Current` attributes across the thread boundary.
+
+### Waiting for all processes
+
+At the end of every streaming action, `wait_all_async_processes!` is called automatically from `process_action`'s `ensure` block. It iterates over every registered future:
+
+- For `:concurrent_ruby` — calls `.wait!` (raises on error) or `.cancel` if a prior future errored.
+- For `:async` — calls `.wait` or `.cancel` similarly.
+
+If any future raises, the error is re-raised after all other futures have been cancelled, ensuring no stray threads are left running.
+
+<Note>
+Thread safety is maintained because each `concurrent_ruby` async process receives its own isolated execution state, shared from the parent thread via `ActiveSupport::IsolatedExecutionState.share_with`. This means ActiveSupport `CurrentAttributes`, database connections, and other thread-local state are properly propagated without races.
+</Note>
+
+<Warning>
+Streaming requires a web server that supports Rack hijacking. **Puma** (the Rails default) works correctly. **WEBrick** does not support `ActionController::Live` and will raise errors when streaming is enabled. If you run WEBrick in development, disable streaming (see below) or switch to Puma.
+</Warning>
+
+## Configuration
+
+### Disable streaming globally
+
+Set `stream_actions: false` in your application config to prevent `ResourceController` and `DashboardController` from ever registering streaming actions:
+
+```ruby
+# config/initializers/torque_admin.rb
+Torque::Admin.configure do |config|
+  config.stream_actions = false
+end
+```
+
+### Choose a parallel backend
+
+```ruby
+Torque::Admin.configure do |config|
+  # Options: :concurrent_ruby (default), :async, or false
+  config.parallel_processing_with = :async
+end
+```
+
+### Opt a specific controller out
+
+Override `async_action?` to return `false`, or pass an empty array to `stream_actions`:
+
+```ruby
+class Admin::PostsController < Admin::BaseController
+  include Admin::ResourceController
+
+  # Option A — clear the inherited list
+  stream_actions []
+
+  # Option B — override the predicate
+  def async_action?(_name = nil) = false
+end
+```
+
+### Add streaming to a custom action
+
+Use `stream_from_actions` in the controller class body:
+
+```ruby
+class Admin::ReportsController < Admin::BaseController
+  include Admin::ResourceController
+
+  stream_from_actions :summary
+
+  def summary
+    initialize_async_process { @stats = Stats.compute }
+    # render as normal — stream is kept open until the future resolves
+  end
+end
+```

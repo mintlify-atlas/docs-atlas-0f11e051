@@ -1,0 +1,149 @@
+---
+title: "Resources: Mapping Rails Models to Admin Interfaces"
+sidebarTitle: "Resources"
+description: "Learn how Torque Admin's Resource class bridges a Rails model to its admin routes, controllers, sections, actions, and widget registrations."
+---
+
+A `Resource` is the admin's internal record for a single Rails model being managed through the interface. It is not a configuration object you write by hand — instead, one is created automatically the first time the router encounters a model name during route drawing. From that point on, the resource accumulates information about which sections it belongs to, which controller constants are responsible for it, and which actions and widgets have been declared against it.
+
+<Note>
+  Resources are auto-created from routing declarations via `fetch_resource`, not manually instantiated. You interact with them when reading metadata from controllers (via the injected `RESOURCE` constant) or when building custom tooling on top of the admin.
+</Note>
+
+## How a Resource Is Created
+
+When you call `resources :posts` inside an `admin do … end` block, the mapper calls `app.fetch_resource("posts")` internally. `fetch_resource` is a simple memoizing factory on the `Application`:
+
+```ruby
+# lib/torque/admin/application.rb
+def fetch_resource(name)
+  @resources[name] ||= mod::Resource.new(name)
+end
+```
+
+`mod::Resource` is the application's lazily generated resource class — a subclass of `Torque::Admin::Resource` bound to its specific application. The `name` string is sanitized to strip any redundant application prefix before being stored.
+
+## Resource Attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+| `name` | `String` | Sanitized model identifier (e.g. `"posts"`, `"admin/posts"`) |
+| `controllers` | `Set<String>` | Qualified controller constant names registered for this resource |
+| `sections` | `Set<Symbol>` | Sidebar section names the resource appears in |
+| `widgets` | `Hash` | `{ collection: Set, member: Set }` of widget action names |
+| `actions` | `Hash` | `{ collection: Set, member: Set }` of custom action names |
+| `primary_handler` | `Object \| nil` | The route mapping object that owns this resource's primary controller |
+
+## Resolving the Model Class
+
+`resource_class` performs a single `classify.constantize` call on the resource name and memoizes the result:
+
+```ruby
+def resource_class
+  @resource_class ||= name.classify.constantize
+end
+```
+
+So for a resource named `"blog/posts"`, `resource_class` returns `Blog::Post`. This is lazy — the constant is not loaded until something actually calls `resource_class`.
+
+## Singular and Plural Forms
+
+`singular` and `plural` delegate to `ActiveRecord::ModelName` when available, falling back to string manipulation otherwise:
+
+```ruby
+def singular
+  resource_class.respond_to?(:model_name) ?
+    resource_class.model_name.singular :
+    name.split('/').last.singularize
+end
+
+def plural
+  resource_class.respond_to?(:model_name) ?
+    resource_class.model_name.plural :
+    name.split('/').last.pluralize
+end
+```
+
+This means the admin respects custom `model_name` overrides in your models, including STI and namespace configurations.
+
+## How Routes Enhance a Resource
+
+Every time a route is drawn inside a resource scope, the mapper calls `resource.enhance_from_route(scope, action_name)`. This method reads annotations from the routing scope and updates the resource accordingly:
+
+```ruby
+def enhance_from_route(scope, action_name)
+  if (section = scope.annotation(:section))
+    @sections << section
+  end
+
+  return if (type = scope.annotation(:type)).nil?
+
+  list = type == :widget ? @widgets : @actions
+  if scope.scope_level == :action
+    list[:member] << action_name
+    list[:collection] << action_name
+  elsif scope.scope_level == :new || scope.scope_level == :collection
+    list[:collection] << action_name
+  else
+    list[:member] << action_name
+  end
+end
+```
+
+The `:type` annotation — injected by the mapper when drawing `action` or `widgets` blocks — is what distinguishes a regular CRUD route from a custom action or widget. Routes without a `:type` annotation (standard index, show, edit, etc.) are not tracked in the resource's action or widget sets.
+
+## Actions and Widgets by Scope
+
+Torque Admin separates actions and widgets into `:collection` and `:member` buckets. The routing DSL populates these automatically:
+
+```ruby
+# In config/routes.rb
+admin do
+  resources :posts, widgets: [:stats] do
+    actions :approve, :reject   # PATCH — member actions by default
+    widgets :preview_card, on: :member
+  end
+end
+
+# After boot, reading back the resource:
+resource = Torque::Admin[:default].fetch_resource("posts")
+
+resource.actions  # => { collection: #<Set: {}>, member: #<Set: {:approve, :reject}> }
+resource.widgets  # => { collection: #<Set: {:stats}>, member: #<Set: {:preview_card}> }
+resource.sections # => #<Set: {}>
+```
+
+The `stats` widget is registered on the `:collection` scope because it was passed to `resources` directly (with no `on:` override), while `preview_card` is explicitly placed on `:member`.
+
+## Controller Injection
+
+When the mapper processes a resource route, it calls `Application#setup_controller` to schedule injection of two constants into the resource's controller class. This injection happens lazily via `Rails.autoloaders.main.on_load`:
+
+```ruby
+# lib/torque/admin/application.rb
+def setup_controller(controller, resource, param)
+  return unless (@_controllers ||= Set.new).add?(controller)
+
+  Rails.autoloaders.main.on_load(controller) do |klass, *|
+    klass.const_set(:RESOURCE, resource)
+    klass.const_set(:RESOURCE_PARAM, param)
+  end
+end
+```
+
+Once the controller class loads, it gains:
+
+| Constant | Value |
+|---|---|
+| `RESOURCE` | The `Resource` object for the model this controller manages |
+| `RESOURCE_PARAM` | The URL parameter name (e.g. `:id`) used to look up records |
+
+Inside any resource controller you can therefore reference `RESOURCE.resource_class` to get the model, `RESOURCE.singular` for route helpers, or `RESOURCE.actions` to inspect what has been registered.
+
+## Inspecting a Resource
+
+```ruby
+Torque::Admin[:default].fetch_resource("posts").inspect
+# => "#<Torque::Admin::Resource name=\"posts\" controllers=[\"PostsController\"] \
+#     sections=[] widgets=[[], []] actions=[[], [:approve, :reject]]>"
+```

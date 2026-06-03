@@ -1,0 +1,56 @@
+---
+title: "Torque Admin: A Pristine Rails Admin Engine"
+sidebarTitle: "Introduction"
+description: "Torque Admin is a Rails Engine gem that mounts a full admin portal into your app, featuring Hotwire streaming, multi-framework UI, and a declarative Elements DSL."
+---
+
+Torque Admin is a plug-and-play Rails Engine gem that gives your application a fully featured administrative portal without forcing you to rebuild it from scratch. Built on top of vanilla Rails with Hotwire at its core, it streams heavy actions like `index` and `show` via `ActionController::Live`, composes CRUD behaviour through a clean concern-based architecture, and lets you pick the front-end framework your team already knows — all while keeping your existing application untouched.
+
+<Note>
+  Torque Admin is currently in **alpha** (`0.1.0.a1`). The API is under active development and may change before the stable `0.1.0` release. It is not yet recommended for production use without thorough testing in your own environment.
+</Note>
+
+## Key Features
+
+**Hotwire Streaming** — Index and show actions are streamed via `ActionController::Live` by default (`stream_actions: true`). Each section of the page is flushed to the browser as it becomes ready, dramatically reducing perceived load time for record-heavy admin views.
+
+**Multi-Framework UI** — Choose your preferred CSS framework at configuration time. Torque Admin ships adapters for Bootstrap, Bulma, Tailwind CSS, and Semantic UI / Fomantic-UI. You can also extend any theme with your own modules or procs through `theme_extensions`.
+
+**Declarative Elements DSL** — Admin pages are assembled from composable _Elements_ — reusable UI building blocks such as menus, forms, and frames — that are resolved through a configurable lookup context, making it easy to override individual pieces without touching the engine's internals.
+
+**Multiple Admin Instances** — `Torque::Admin[:name]` returns a named `Application` instance, so you can mount separate admin portals (e.g. a customer-facing back-office alongside an internal ops panel) from the same Rails application with independent configuration, routes, and controllers.
+
+**Extended Routing DSL** — A single `admin do … end` block in `config/routes.rb` mounts the engine, declares your resource routes, and registers them with the correct admin application — no manual `mount` calls required.
+
+**Authentication Integrations** — Resources can be individually marked as authenticated or unauthenticated via route annotations, and the engine exposes `authenticable_resource!` hooks for integration with Devise, Rodauth, or custom strategies.
+
+## Requirements
+
+| Requirement | Minimum version |
+|---|---|
+| Ruby | 3.2.0 |
+| Rails | 8.1 |
+
+## Project Info
+
+- **Current version:** `0.1.0.a1`
+- **License:** MIT
+- **Author:** Carlos Silva
+- **Source:** [github.com/crashtech/torque-admin](https://github.com/crashtech/torque-admin)
+
+## Where to Go Next
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Add Torque Admin to your Gemfile, mount the engine, and wire up your base controller in four straightforward steps.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Build a working admin interface that manages a real Rails model in under five minutes.
+  </Card>
+  <Card title="Application Concepts" icon="cubes" href="/concepts/application">
+    Learn how admin instances, engines, and the isolated namespace module all fit together.
+  </Card>
+  <Card title="Configuration Overview" icon="sliders" href="/configuration/overview">
+    Explore every configuration option — themes, streaming, authentication defaults, and more.
+  </Card>
+</CardGroup>

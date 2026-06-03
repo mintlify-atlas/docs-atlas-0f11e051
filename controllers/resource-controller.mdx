@@ -1,0 +1,207 @@
+---
+title: "ResourceController: Full CRUD for Your Admin Resources"
+sidebarTitle: "Resource Controller"
+description: "ResourceController is a Rails Concern that composes all Torque Admin sub-concerns into a complete, ready-to-use CRUD interface for your admin resources."
+---
+
+`ResourceController` is the top-level Rails Concern you include in any resource-backed admin controller. It assembles every specialised sub-concern — streaming, collection management, member lookup, index/show/form rendering, batch operations, custom actions, and widgets — into a single, coherent CRUD interface. Including it gives your controller the full set of Torque Admin capabilities with one line of code.
+
+## Including the Concern
+
+```ruby
+class Admin::PostsController < Admin::ApplicationController
+  include Torque::Admin::ResourceController
+end
+```
+
+<Note>
+The constants `RESOURCE` (a `Torque::Admin::Resource` instance) and `RESOURCE_PARAM` (the URL param key, e.g. `:id`) are **not** set manually. The router's `resources` (or `resource`) mapper calls `app.setup_controller` behind the scenes, which hooks into Rails autoloading and injects both constants into your controller class when it is first loaded. You never need to define them yourself.
+</Note>
+
+## Included Concerns
+
+`ResourceController` pulls in the following concerns in order. Each one is documented in its own section.
+
+| Order | Concern | Responsibility |
+|-------|---------|---------------|
+| 1 | `StreamController` | Async / streaming action support via `ActionController::Live` |
+| 2 | `CollectionController` | Scoped collection loading with filter, scope, sort, and pagination pipeline |
+| 3 | `MemberController` | Single-record lookup; exposes `resource` / `member` helpers to views |
+| 4 | `IndexController` | Index page element coordination |
+| 5 | `ShowController` | Show page element coordination |
+| 6 | `FormController` | Form record initialisation and `form_element` setup |
+| 7 | `BatchController` | Batch-action support between index and processing actions |
+| 8 | `ActionsController` | Default handlers for router-generated actions (e.g. `search`) |
+| 9 | `WidgetsController` | Widget data helpers for index and dashboard pages |
+
+## Template Path Resolution
+
+When `ResourceController` is included, three template paths are appended (in priority order, highest first):
+
+```
+app/templates/<admin_name>/resource/   # app-level, admin-specific overrides
+app/templates/resource/                # app-level, shared across all admins
+<gem>/app/templates/resource/          # gem built-in defaults
+```
+
+Templates are resolved at render time using the first matching path, so you can override individual templates without touching others.
+
+## Streaming Setup
+
+```ruby
+included do
+  stream_from_actions :index, :show if admin_application.config.stream_actions
+end
+```
+
+When `config.stream_actions` is `true`, the `:index` and `:show` actions are automatically enrolled for async streaming via `ActionController::Live`. You can add further actions with `stream_from_actions` directly in your controller.
+
+## Element Aliases
+
+Two element aliases are registered at include time:
+
+| Alias | Resolves to |
+|-------|-------------|
+| `primary_form` | `new_form`, `create_form`, `edit_form`, `update_form` |
+| `search_form` | `index_form` |
+
+This lets you define a single `primary_form` element in your UI DSL and have it used across all four CRUD form actions automatically.
+
+## Before-Action Hook
+
+```ruby
+before_action :eager_load_resource
+```
+
+Before every action, `eager_load_resource` runs. It inspects `params` for `RESOURCE_PARAM`:
+
+- **If present** — calls `resource` (i.e. `MemberController#resource`) to load and memoize the individual record.
+- **If absent** — calls `scoped_resource` to load and memoize the base collection scope.
+
+This ensures both member and collection ivar are primed before your action body runs.
+
+## Protected Methods
+
+### `scoped_resource`
+
+Returns the appropriate ActiveRecord scope for the current request.
+
+```ruby
+def scoped_resource
+  (chain = route_annotation(:nesting)).nil? ? default_scoped_resource : chained_scoped_resource(chain)
+end
+```
+
+- When the route has **no nesting annotation**, delegates to `default_scoped_resource`, which returns `RESOURCE.resource_class.default_scoped`.
+- When the route **has a nesting annotation** (i.e. the resource is nested inside another), delegates to `chained_scoped_resource` to resolve the correct nested scope.
+
+### `default_scoped_resource`
+
+```ruby
+def default_scoped_resource
+  RESOURCE.resource_class.default_scoped
+end
+```
+
+The plain, un-nested starting scope. Override this method in your controller if you need a global, default scope applied to all actions (e.g. tenant scoping).
+
+### `chained_scoped_resource(chain)`
+
+```ruby
+def chained_scoped_resource(chain)
+  @_chained_scoped_resource ||= nested_scope_from(find_chain_parent!(chain))
+end
+```
+
+Memoised. Walks the nesting chain injected by the router (a hash of `{ param_key => controller_name }` pairs) by calling `find_chain_parent!`, then uses `nested_scope_from` to scope through the found parent record.
+
+### `find_chain_parent!(chain, values: params, assign: true)`
+
+Iterates over each entry in the nesting chain. For every entry it:
+
+1. Finds (or initialises) the corresponding side controller via `initialized_side_controllers`.
+2. If a previous parent exists, scopes through it first.
+3. Calls `find_member!` on the side controller using the appropriate URL parameter.
+4. Optionally memoises the found record into its named instance variable.
+
+This allows arbitrarily deep nesting (e.g. `/departments/:department_id/teams/:team_id/members`) to be resolved automatically.
+
+### `nested_scope_from(foreign_member, reflection: nil, macro: :belongs_to)`
+
+```ruby
+def nested_scope_from(foreign_member, reflection: nil, macro: :belongs_to)
+  reflection ||= RESOURCE.resource_class.reflect_on_all_associations.find do |reflection|
+    reflection.klass == foreign_member.class && (macro.nil? || reflection.macro == macro)
+  end&.name
+
+  foreign_member.public_send(reflection)
+end
+```
+
+Uses ActiveRecord reflection to find the `belongs_to` association on `RESOURCE.resource_class` that matches the type of `foreign_member`, then calls that association method on the parent record to return the nested scope. Raises a descriptive error if no matching reflection is found.
+
+## BaseController Utilities
+
+`BaseController` (included transitively) provides shared infrastructure used throughout all sub-concerns:
+
+| Helper | Description |
+|--------|-------------|
+| `admin_application` | The `Torque::Admin::Application` instance for this admin |
+| `admin_application_config` | Shortcut to `admin_application.config` |
+| `admin_controller_name` | Underscored controller name, relative to the admin namespace |
+| `ui_framework` | The UI framework name from the configured theme builder |
+| `elements` | Element DSL access (menus, forms, etc.) |
+| `route_annotations` | Hash of annotations attached to the current route by the mapper |
+| `route_annotation(key)` | Single annotation value lookup |
+| `initialized_side_controllers` | Lazy hash of sibling controller instances sharing this request/response pair |
+
+Frame and template resolution helpers (`Elements::Frame`, `Elements::Templates`, `Elements::Controller`) are also mixed in, enabling the `frame`, `append_template_path`, and element fetch APIs.
+
+## SettingsController
+
+`SettingsController` is included by `BaseController` and provides a declarative way to attach per-action settings:
+
+```ruby
+# In your controller class body (class method):
+action_settings :index, columns: %i[title author published_at], per_page: 25
+action_settings :show,  sidebar: true
+
+# In an action or helper (instance method):
+action_settings(:columns)  # => [:title, :author, :published_at]
+action_settings(:per_page) # => 25
+```
+
+Settings are stored in the frozen `settings_for_actions` class attribute and are looked up by the current `action_name` by default. You can pass an explicit `action:` keyword to read settings for a different action.
+
+## Complete Example
+
+The example below shows a minimal but complete `PostsController` using `ResourceController`. It overrides `default_scoped_resource` for tenant scoping and uses `action_settings` to declare index columns and default per-page.
+
+```ruby
+# app/controllers/admin/posts_controller.rb
+class Admin::PostsController < Admin::ApplicationController
+  include Torque::Admin::ResourceController
+
+  # Declare per-action settings (class-level)
+  action_settings :index, columns: %i[title status author published_at], per_page: 20
+  action_settings :show,  sidebar: true
+
+  protected
+
+    # Scope every query to the current tenant
+    def default_scoped_resource
+      super.where(account: current_account)
+    end
+
+    # Parse and apply status filter from params
+    def filter_collection(scope, settings)
+      return scope unless (status = params[:status]).present?
+      scope.where(status: status)
+    end
+
+    # Default sort: newest posts first
+    def default_sort_settings
+      { column: :published_at, direction: :desc }
+    end
+end
+```

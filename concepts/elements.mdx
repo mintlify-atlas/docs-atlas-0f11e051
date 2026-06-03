@@ -1,0 +1,253 @@
+---
+title: "The Elements DSL: Reusable Admin UI Components"
+sidebarTitle: "Elements"
+description: "Discover how Torque Admin's Elements system defines, resolves, and renders logical UI components — menus, frames, and custom widgets — through a declarative DSL."
+---
+
+Elements are the admin's composable UI vocabulary. Rather than scattering HTML markup across view templates, Torque Admin asks you to describe the _logical_ structure of each component — what items a menu contains, what columns a table exposes — and then delegates the translation into actual markup to the `UiBuilder`, which applies the rules of whichever CSS framework you have selected. The result is a clean separation between structure and presentation that makes it straightforward to override a single element without touching anything else.
+
+## `Torque::Elements::Base` — The Abstract Root
+
+Every element class ultimately inherits from `Torque::Elements::Base`. The class mixes in five core modules:
+
+| Module | Responsibility |
+|---|---|
+| `Core::Index` | Maintains a hash index of nodes by identifier |
+| `Core::Nodes` | Tree structure — append, traverse, shift nodes |
+| `Core::Render` | Renders nodes to HTML via `UiBuilder` |
+| `Core::Helpers` | I18n resolution and text attribute sanitization |
+| `Core::Definition` | Lifecycle management, state tracking, config block execution |
+
+`Base` sets `abstract_class = true` on itself and resets the flag on every subclass, so any attempt to instantiate `Base` directly or another class that explicitly marks itself abstract raises `NotImplementedError`.
+
+## Element States
+
+An element passes through a set of named states stored in a `Set` on `@state`:
+
+```
+initiated → loading → loaded → rendering → rendered
+```
+
+You can test the current state at any point:
+
+```ruby
+element.initiated?  # true immediately after new()
+element.loaded?     # true after load_config! has run
+element.rendered?   # true after render_in completes
+```
+
+State gates protect you from mutations after the fact — for example, `remove` raises if called once an element is `rendered?`.
+
+## The Registry
+
+In controllers and views, elements are accessed through a `Registry` instance exposed as `elements`. The registry is constructed with a reference to the current controller and uses it to look up element definitions registered on the controller class hierarchy.
+
+```ruby
+# Accessing the main menu element from a view:
+elements.main_menu         # fetches or instantiates MenuElement for :main_menu
+elements[:main_menu]       # same thing — [] aliases fetch
+elements.main_menu!        # raises NotFound if undefined
+elements.main_menu?        # true if the element is defined/renderable
+```
+
+`fetch` walks up the controller inheritance chain, stopping at the first class that has the named element registered:
+
+```ruby
+# Inside Registry#fetch_from_controller:
+while current < Controller
+  entry = current.elements&.[](name)
+  return entry if entry
+  # also checks element_aliases[name] ...
+  current = current.superclass
+end
+raise NotFound, "Element #{name} not found in #{@controller.class}"
+```
+
+<Tip>
+  Elements are resolved in the order of `elements_lookup_context` — the last module in the list is searched first. By default this is `['Object', 'Torque::Admin']`, meaning app-level element classes (e.g. `MenuElement` in your `app/elements/` directory) override the gem's built-in defaults automatically.
+</Tip>
+
+## Registering Elements on Controllers
+
+Use the `element` class method inside any admin controller to declare which elements it provides:
+
+```ruby
+class Admin::BaseController < ApplicationController
+  include Torque::Admin::BaseController
+
+  element :main_menu, of_type: :menu do |m|
+    m.item :dashboard,  root_path
+    m.item :posts,      admin_posts_path
+    m.item :users,      admin_users_path
+  end
+end
+```
+
+`of_type:` is a snake-case symbol that resolves to an element class via `element_class_name`:
+
+```ruby
+# :menu → "Menu" → "MenuElement" → Torque::Admin::MenuElement
+```
+
+Use `alias_element` to give a second name to an existing element definition — useful when a subclass wants to refer to an inherited element under a different key:
+
+```ruby
+alias_element :navigation, :main_menu
+```
+
+## The `MenuElement` in Detail
+
+`MenuElement` is the primary built-in concrete element. It extends `BaseElement` with:
+
+- **`item(identifier, label, href, **options)`** — adds a menu entry node
+- **`divider`** — adds a visual separator node
+- **`sort`** setting — when `true` (or `:root` / `:children`), sorts items alphabetically
+- **`icons`** setting — a hash of `identifier → icon_name`, or `true` to use the controller's icon helper
+- **`detect_current`** setting — when `true`, compares each `href` to `current_page?` and marks the active item
+
+```ruby
+element :main_menu, of_type: :menu, detect_current: true, icons: true do |m|
+  m.item :dashboard, root_path
+  m.item :posts,     admin_posts_path
+  m.divider
+  m.item :settings,  admin_settings_path
+end
+```
+
+## Writing a Custom Element
+
+A minimal custom element class needs only to implement `type` and declare its nodes:
+
+```ruby
+# app/elements/stats_panel_element.rb
+class StatsPanelElement < Torque::Admin::BaseElement
+  def type
+    :stats_panel
+  end
+
+  def metric(identifier, **options)
+    add_node(identifier, :metric, **options)
+  end
+end
+```
+
+Register it on a controller and define its content:
+
+```ruby
+element :kpi_panel, of_type: :stats_panel do |p|
+  p.metric :total_orders,   label: 'Orders'
+  p.metric :revenue_today,  label: 'Revenue'
+end
+```
+
+## The `UiBuilder` — Structure to Markup
+
+`UiBuilder` holds a registry of CSS framework adapters (`framework_classes`) and dispatches element node rendering to the correct adapter based on the configured theme. Each adapter is a subclass of `UiBuilder` that includes a framework-specific helper module.
+
+### Presets
+
+Every UI component in a framework helper is described with one or more _presets_. A preset is a named hash of HTML options that serve as the starting point before per-instance properties are applied:
+
+```ruby
+# Bootstrap adapter
+define :button do |b|
+  b.preset(:default, as: 'button', class: 'btn')
+end
+
+# Semantic UI adapter
+define :button do |b|
+  b.preset(:default,   as: 'button', class: 'ui button')
+  b.preset(:multiple,  as: 'div',    class: { button: false, buttons: true })
+end
+```
+
+### Property Transformers
+
+Inside a `define` block, properties describe how input values are transformed into HTML attributes. The transformer chain uses a fluent interface:
+
+| Method | Effect |
+|---|---|
+| `.maps(...)` | Translates symbolic input values to output strings |
+| `.formats(:class, '%s-btn')` | Interpolates the mapped value into a class name pattern |
+| `.assigns(:class)` | Appends the (mapped/formatted) value to the named attribute |
+| `.applies(class: 'active', disabled: true)` | Merges a fixed attribute set when the property is truthy |
+| `.toggles(:fluid, :inverted)` | Shorthand for a boolean property that appends its own name as a class |
+| `.imports(:icon, :size, :color)` | Pulls in a shared property definition by name |
+
+A full example from the Bootstrap adapter:
+
+```ruby
+define :badge do |b|
+  b.preset(:default, as: 'span', class: 'badge')
+
+  b.property(:pill).applies(class: 'rounded-pill')
+  b.property(:circle).applies(class: 'rounded-circle')
+  b.property(:color).formats(:class, 'text-bg-%s')
+end
+```
+
+And from the Semantic UI adapter for comparison:
+
+```ruby
+define :badge do |b|
+  b.preset(:default, as: 'span', class: 'ui label')
+
+  b.toggles(:tag, :horizontal, :inverted, :fluid, :centered, :circular, :empty, :basic)
+  b.property(:pointing).maps(
+    true => 'pointing', below: 'pointing below',
+    left: 'left pointing', right: 'right pointing'
+  ).assigns(:class)
+  b.imports(:icon, :size, :color)
+end
+```
+
+The same logical `badge` element renders correctly with either framework because only the transformer rules change, not the element definition in the controller.
+
+### `associate`
+
+`associate :buttons, to: :button, preset: :multiple` creates an alias name (`:buttons`) that refers to an existing element type (`:button`) with a specific preset pre-selected. This enables plural/group variants without duplicating the full definition.
+
+## Frames — Page Chrome Templates
+
+Frames sit between your action views and the outer Rails layout. They control the overall page structure — header, sidebar, main content area, footer — without coupling that structure to any individual action template.
+
+The four built-in frames are:
+
+| Frame | Description |
+|---|---|
+| `classic` | Horizontal top nav bar with menu, fluid main content, and a footer |
+| `modern` | Large header banner + left vertical sidebar menu + footer below content |
+| `sidebar` | Vertical sidebar with app banner, full-height content column and footer |
+| `minimal` | Bare-bones wrapper with no menu chrome (used for login pages, errors) |
+
+Frames are selected with the `frame` class method on any controller, mirroring how Rails `layout` works:
+
+```ruby
+class Admin::BaseController < ApplicationController
+  frame 'sidebar'                      # always use the sidebar frame
+  frame :choose_frame                  # call a method to pick at runtime
+  frame 'minimal', only: [:new_session]
+end
+```
+
+Frame templates live in `app/views/frames/` and render `elements.main_menu` to pull the registered menu element into the correct structural position. For example, `sidebar.html.erb` renders:
+
+```erb
+<%= ui.body(:sidebar) do %>
+  <%= elements.main_menu(:vertical, as: :header, before: app_banner) %>
+
+  <main style="flex: 1; display: flex; flex-direction: column;">
+    <div style="flex: 1; padding: 1rem 2rem;">
+      <%= yield %>
+    </div>
+
+    <footer class="ui vertical inverted footer segment">
+      <div class="ui center aligned container">
+        Copyright &copy; 2024
+      </div>
+    </footer>
+  </main>
+<% end %>
+```
+
+The `ui.body(:sidebar)` call invokes the `UiBuilder`'s `body` helper with the `:sidebar` preset, wrapping everything in the correct top-level container for the active CSS framework. Overriding a frame is as simple as creating `app/views/frames/sidebar.html.erb` in your host application — the standard Rails view lookup will prefer it over the engine's copy.

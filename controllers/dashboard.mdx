@@ -1,0 +1,168 @@
+---
+title: "DashboardController: Setting Up the Admin Home Page"
+sidebarTitle: "Dashboard"
+description: "DashboardController is a Rails Concern that sets up the admin home page, registers template paths, and adds async streaming support via StreamController."
+---
+
+`DashboardController` is a lightweight Rails Concern that turns any controller into the home page of your Torque Admin application. It handles template path registration, optional async streaming, and integration with the routing DSL that declares dashboard routes and partials. In most apps, a dashboard controller is either generated automatically by the router or created manually as a thin class that includes this concern.
+
+## Including the Concern
+
+```ruby
+class Admin::DashboardController < Admin::ApplicationController
+  include Torque::Admin::DashboardController
+end
+```
+
+Including `DashboardController` automatically:
+
+1. Registers three template search paths (see [Template Resolution](#template-resolution) below).
+2. Enrols the `:index` action for async streaming when `config.stream_actions` is `true`.
+3. Mixes in `StreamController` for Turbo-compatible async rendering.
+
+## Streaming Setup
+
+```ruby
+included do
+  stream_actions :index if admin_application.config.stream_actions
+end
+
+include StreamController
+```
+
+When `admin_application.config.stream_actions` is enabled, the dashboard `:index` action automatically uses `ActionController::Live` for streaming. This allows panels, stats blocks, and other dashboard widgets to be rendered and flushed to the browser incrementally, improving perceived performance on dashboards with multiple slow data sources.
+
+## Template Resolution
+
+Three template paths are appended when the concern is included, checked in priority order (highest first):
+
+| Priority | Path | Purpose |
+|----------|------|---------|
+| 1 (highest) | `app/templates/<admin_name>/dashboard/` | App-level overrides scoped to a specific admin namespace |
+| 2 | `app/templates/dashboard/` | App-level overrides shared across all admin namespaces |
+| 3 (lowest) | `<gem>/app/templates/dashboard/` | Gem-provided built-in defaults |
+
+You only need to provide a file at the app level when you want to override the built-in default. Any template not found in the higher-priority paths falls through to the next one automatically.
+
+## Declaring Dashboard Routes
+
+Dashboard routes are declared inside the `admin` block in `config/routes.rb` using the `dashboard` mapper method provided by `Torque::Admin::Mapper::Dashboards`.
+
+### Basic dashboard route
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  admin do
+    dashboard
+  end
+end
+```
+
+This registers a root `GET /` route dispatched to `DashboardController#index` and creates named route helpers `dashboard_path` and `root_path` within the admin engine.
+
+### Dashboard with partials
+
+Partials are individual GET routes nested under the dashboard path. They are useful for streaming individual panels from a Turbo Frame:
+
+```ruby
+admin do
+  dashboard partials: [:stats, :recent_activity, :top_users]
+end
+```
+
+This registers the following routes in addition to the root:
+
+```
+GET /stats              dashboard#stats
+GET /recent_activity    dashboard#recent_activity
+GET /top_users          dashboard#top_users
+GET /                   dashboard#index
+```
+
+Each partial name maps to an action on `DashboardController`, so you can define those actions (and their corresponding templates) independently.
+
+### Dashboard scoped to a path
+
+Pass a path prefix as the first argument to nest the dashboard under a sub-path:
+
+```ruby
+admin do
+  dashboard :reports, partials: [:weekly, :monthly]
+end
+```
+
+<Note>
+If no `dashboard` route has been declared by the time routes are finalised, Torque Admin automatically adds one via `finalize_routes!`. Internally, `Application#finalize_routes!` calls `auto_dashboard_route`, which runs `dashboard_root` through a new `Mapper` instance. `dashboard_root` only registers the dashboard when no `dashboard` named route already exists, so it is safe to call even if you have declared one manually. This ensures every admin application always has a working home page.
+</Note>
+
+## Complete Routing + Controller Example
+
+The following example shows a custom dashboard with streaming enabled, two stat partials, and a reference to a resource widget rendered inline in the index template.
+
+### Routes
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  admin do
+    dashboard partials: [:stats, :recent_activity]
+
+    resources :posts,   actions: %i[index show new create edit update destroy]
+    resources :users,   actions: %i[index show]
+  end
+end
+```
+
+### Controller
+
+```ruby
+# app/controllers/admin/dashboard_controller.rb
+class Admin::DashboardController < Admin::ApplicationController
+  include Torque::Admin::DashboardController
+
+  def stats
+    @total_posts     = Post.count
+    @published_posts = Post.published.count
+    @total_users     = User.count
+
+    render partial: "stats"
+  end
+
+  def recent_activity
+    @activities = ActivityLog.order(created_at: :desc).limit(10)
+    render partial: "recent_activity"
+  end
+end
+```
+
+### Index template (`app/templates/admin/dashboard/index.html.erb`)
+
+```erb
+<%= turbo_frame_tag "stats" do %>
+  <%# Loaded asynchronously when stream_actions is true %>
+  <%= turbo_frame_tag "stats", src: stats_dashboard_path, loading: :lazy %>
+<% end %>
+
+<%= turbo_frame_tag "recent_activity", src: recent_activity_dashboard_path, loading: :lazy %>
+
+<%# Reference a widget defined on the Posts resource %>
+<%= render_widget :posts_summary %>
+```
+
+## Using Resource Widgets in Dashboard Templates
+
+Resources can declare widgets via the `widgets` mapper helper, which registers dedicated GET routes and marks the action as a widget type in the `RESOURCE` metadata. Those widgets can then be referenced from dashboard templates, since `WidgetsController` (included through `ResourceController`) exposes the underlying data helpers.
+
+```ruby
+# In your routes:
+admin do
+  dashboard
+
+  resources :posts do
+    widgets :summary, :engagement_chart, on: :collection
+  end
+end
+```
+
+The `:summary` and `:engagement_chart` actions on `PostsController` are now discoverable as widgets and can be rendered inside dashboard frames or other admin views, keeping dashboard data fetching co-located with the resource that owns the data.

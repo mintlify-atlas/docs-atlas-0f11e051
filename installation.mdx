@@ -1,0 +1,121 @@
+---
+title: "Installing Torque Admin in Your Rails Application"
+sidebarTitle: "Installation"
+description: "Add the torque-admin gem, mount the engine with the admin routing helper, and create your base controller in four steps — no boilerplate generators required."
+---
+
+Installing Torque Admin is intentionally lightweight. The gem ships a `Railtie` that hooks into Rails initialization automatically, so there are no generators to run and no configuration files to copy. All you need to do is declare the gem, mount the engine in your routes, and create a single base controller class. The steps below walk you through each of these in order.
+
+## Requirements
+
+Before you begin, make sure your application meets the following minimum versions:
+
+| Dependency | Minimum version |
+|---|---|
+| Ruby | 3.2.0 |
+| Rails | 8.1 |
+
+<Steps>
+
+<Step title="Add the gem to your Gemfile">
+
+Open your application's `Gemfile` and add the `torque-admin` gem:
+
+```ruby Gemfile
+gem 'torque-admin'
+```
+
+Because Torque Admin is currently in alpha, you may also want to pin to the exact version to avoid unexpected updates:
+
+```ruby Gemfile
+gem 'torque-admin', '0.1.0.a1'
+```
+
+</Step>
+
+<Step title="Run bundle install">
+
+Install the gem and its dependencies:
+
+```bash
+bundle install
+```
+
+After bundling, `Torque::Admin::Railtie` is automatically loaded as part of Rails' boot sequence. It registers `Torque::Admin` as an eager-load namespace and extends `ActionDispatch::Routing::Mapper` with the `admin` routing helper — no `require` statements needed in your application code.
+
+</Step>
+
+<Step title="Mount the engine in config/routes.rb">
+
+Torque Admin provides a first-class `admin` routing helper that both mounts the engine and opens a block for declaring your admin resource routes. Add it to `config/routes.rb`:
+
+```ruby config/routes.rb
+Rails.application.routes.draw do
+  # Mount the default admin application at /admin and declare resources inside.
+  admin do
+    resources :posts
+    resources :users
+  end
+end
+```
+
+The `admin` helper accepts an optional path argument and keyword options that are forwarded to `mount`. By default the engine is mounted at `/:name` (i.e. `/admin` for the default instance). You can customise the path like this:
+
+```ruby config/routes.rb
+Rails.application.routes.draw do
+  admin :default, '/back-office' do
+    resources :posts
+  end
+end
+```
+
+Internally, the helper calls `mount` once per application instance and then opens a `Mapper` scoped to the engine's routes, so every call to `resources` or `resource` inside the block is registered against the correct admin engine rather than the host application.
+
+<Info>
+  Multiple admin instances are supported. Call `admin :ops do … end` for a second named application — it will be mounted at `/ops` and maintain its own isolated routes, controllers, and configuration.
+</Info>
+
+</Step>
+
+<Step title="Create a base controller">
+
+Torque Admin does not generate a base controller for you. Create one that inherits from your application's own `ApplicationController` and includes `Torque::Admin::BaseController`:
+
+```ruby app/controllers/admin/base_controller.rb
+module Admin
+  class BaseController < ApplicationController
+    include Torque::Admin::BaseController
+  end
+end
+```
+
+Including `Torque::Admin::BaseController` wires in several key concerns automatically:
+
+- **`Elements::Frame`** — manages Turbo frame context for streamed responses
+- **`Elements::Templates`** — provides the template lookup pipeline used by Elements
+- **`Elements::Controller`** — exposes the `element` and `main_menu` class-level DSL
+- **`SettingsController`** — exposes per-request admin configuration helpers
+
+The concern also appends the engine's view path and sets the layout to your admin application's name (e.g. `admin`), so Rails will look for `app/views/layouts/admin.html.erb` in your host application first before falling back to the engine's own layout.
+
+</Step>
+
+</Steps>
+
+## How the Engine Namespace Works
+
+When the `admin` routing helper first runs, it builds a `Torque::Admin::Application` instance and calls `engine.isolate_namespace` with a module named after the application — `Admin::Engine` for the default instance. This means:
+
+- Route helpers are scoped under `admin_` (e.g. `admin_posts_path`)
+- The engine is accessible as `Admin::Engine`
+- Controller lookups happen relative to the `Admin` namespace
+
+If you want fully isolated model naming (so that `Admin::Post` is treated as a separate model), set `isolate_namespace: true` in your admin configuration. The default (`nil`) uses a hybrid mode: routes and helpers are isolated, but models are resolved globally.
+
+## Next Steps
+
+With the gem installed and the engine mounted, you're ready to build your first resource controller and see the admin interface in the browser.
+
+<Card title="Quickstart" icon="bolt" href="/quickstart">
+  Follow the step-by-step quickstart guide to create your first admin resource and visit the dashboard in under five minutes.
+</Card>

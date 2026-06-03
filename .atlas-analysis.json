@@ -1,0 +1,94 @@
+{
+  "projectType": "framework",
+  "projectName": "Torque Admin",
+  "projectDescription": "A Rails Engine that provides a pristine, plug-and-play administrative portal leveraging Hotwire streaming, multiple front-end CSS frameworks (Bootstrap, Bulma, Tailwind, Semantic UI), and a declarative Elements system for building rich admin interfaces.",
+  "theme": "palm",
+  "primaryColor": "#40993e",
+  "lightColor": "#183018",
+  "darkColor": "#e4e8e4",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/application",
+              "concepts/resources",
+              "concepts/routing",
+              "concepts/elements"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/themes",
+              "configuration/authentication"
+            ]
+          },
+          {
+            "group": "Controllers",
+            "pages": [
+              "controllers/resource-controller",
+              "controllers/collection",
+              "controllers/dashboard"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/streaming",
+              "advanced/custom-elements",
+              "advanced/multiple-applications"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Rails Engine — mount as a standalone admin interface with zero boilerplate",
+    "Hotwire streaming — index and dashboard actions streamed by default via ActionController::Live",
+    "Multi-framework UI — choose Bootstrap, Bulma, Tailwind, or Semantic UI (Fomantic-UI) per application",
+    "Declarative Elements system — define reusable UI components (menus, forms, tables) via a DSL",
+    "Extended routing DSL — resource(), resources(), dashboard(), widgets(), actions(), section(), authenticate() helpers",
+    "Multiple admin instances — run several named admin applications side-by-side in one Rails app",
+    "Namespace isolation options — full isolation, hybrid, or no isolation via isolate_namespace config",
+    "Parallel async processing — built-in concurrent_ruby / async support for heavy collection queries",
+    "Nested resource scoping — automatic chained belongs_to scoping for nested admin resources",
+    "Authentication integrations — supports Rails, custom, and Devise authentication providers"
+  ],
+  "publicApiSurface": [
+    "Torque::Admin[] — fetch or create a named Application instance",
+    "Torque::Admin.configure — configure the default admin application",
+    "Application#configure — yield config block for title, theme, base_controller, stream_actions, etc.",
+    "Routing#admin(name, path, **options, &block) — mount and define routes for an admin application",
+    "Mapper#resources(*resources, actions:, widgets:, source:) — declare admin resource routes",
+    "Mapper#resource(*resources, actions:, widgets:, source:) — declare singleton admin resource routes",
+    "Mapper#dashboard(path, partials:) — declare a dashboard route",
+    "Mapper#section(name) — group routes under a named sidebar section",
+    "Mapper#widgets(*list, action:, on:) — register widget routes for a resource",
+    "Mapper#actions(*actions, view:, via:) — register custom action routes",
+    "Mapper#authenticate(resource, with:) — configure authentication for a resource",
+    "Mapper#unauthenticated — mark a route block as public",
+    "Mapper#searchable(*resources) — add a search route to a resource",
+    "BaseController — concern included in your TAController, provides elements, frame, and settings DSL",
+    "ResourceController — full CRUD concern composed of Collection, Member, Index, Show, Form, Batch, Actions, Widgets",
+    "CollectionController#collection — returns the current paginated, filtered, sorted collection",
+    "MemberController#resource / #member — finds and memoizes the current record",
+    "StreamController.stream_from_actions(*actions) — opt actions into HTTP streaming",
+    "Elements::Base — base class for all custom admin elements",
+    "UiBuilder.add_framework(name, mod) — register a new CSS framework helper module",
+    "DEFAULT_CONFIG — InheritableOptions with title, theme, root_path, stream_actions, isolate_namespace, base_controller, parallel_processing_with, elements_lookup_context, resources"
+  ]
+}

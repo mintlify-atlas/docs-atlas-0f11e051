@@ -1,0 +1,238 @@
+---
+title: "UI Themes: Bootstrap, Bulma, Tailwind, Semantic UI"
+sidebarTitle: "Themes"
+description: "Choose a CSS framework theme in Torque Admin, extend the UiBuilder with custom components, and learn how page frames control the admin chrome layout."
+---
+
+Torque Admin ships with first-class support for four CSS frameworks — Bootstrap, Bulma, Tailwind, and Semantic UI (Fomantic-UI). The active theme controls how every UI primitive (buttons, badges, loaders, segments, etc.) is rendered, and it can be extended or completely overridden without forking the engine. Switching frameworks is a single config change; the rest of the admin adapts automatically.
+
+<Note>
+  Torque Admin provides the **component layer** for each framework but does **not** bundle the framework's CSS or JavaScript assets. You must add the chosen framework's stylesheet to your application layout (e.g. via a CDN link, a gem, or your asset pipeline) independently of this setting.
+</Note>
+
+---
+
+## Setting the Theme
+
+Set `config.theme` to one of the four supported values in your initializer or in the inline configure block when mounting the engine:
+
+```ruby
+# config/initializers/torque_admin.rb
+Torque::Admin.configure do |config|
+  config.theme = 'semantic_ui'   # 'tailwind' | 'bootstrap' | 'bulma' | 'semantic_ui'
+end
+```
+
+Each string value maps directly to a helper module inside `Torque::Elements::Helpers`:
+
+| Config value | Helper module |
+|---|---|
+| `'bootstrap'` | `Torque::Elements::Helpers::Bootstrap` |
+| `'bulma'` | `Torque::Elements::Helpers::Bulma` |
+| `'semantic_ui'` | `Torque::Elements::Helpers::SemanticUI` |
+| `'tailwind'` | Built-in Tailwind helpers |
+
+When the admin application initializes, `UiBuilder.add_framework` is called with the theme name and the corresponding module, creating a dedicated `UiBuilder` subclass that has all component definitions baked in.
+
+---
+
+## Theme Configuration by Framework
+
+<Tabs>
+  <Tab title="Semantic UI">
+    Semantic UI (and its community fork Fomantic-UI) uses human-readable class names. The helper module is `Torque::Elements::Helpers::SemanticUI`.
+
+    **ICON format:** `"icon %s"` (e.g. `"icon home"`)
+
+    **SIZES mapping:** `mini tiny small default large big huge massive` (plus numeric aliases 1–8)
+
+    **Defined elements:**
+
+    | Element | Default tag | Notable presets / notes |
+    |---|---|---|
+    | `button` | `<button class="ui button">` | Presets: `:default`, `:multiple` (renders as `<div class="ui buttons">`) |
+    | `container` | `<div class="ui container">` | Toggles: `text`, `fluid`, `resizable` |
+    | `divider` | `<div class="ui divider">` | Toggles: `vertical`, `horizontal`, `fitted`, `hidden`, `section` |
+    | `header` | `<div class="ui header">` | Imports: `icon`, `size`, `color`; toggles: `sub`, `dividing`, `block`, `inverted` |
+    | `icon` | `<i>` | Argument `:name` formatted with `ICON`; no content rendered |
+    | `image` | `<img class="ui image">` | Toggles: `avatar`, `bordered`, `fluid`, `rounded`, `circular`, `centered` |
+    | `badge` | `<span class="ui label">` | Preset `:multiple` → `<div class="ui labels">`; imports: `icon`, `size`, `color` |
+    | `loader` | `<div class="ui loader">` | Toggles: `text`, `indeterminate`, `active`, `inverted`; imports: `size`, `color` |
+    | `placeholder` | `<div class="ui placeholder">` | Toggles: `fluid`, `inverted` |
+    | `rail` | `<div class="ui rail">` | Toggles: `internal`, `dividing`, `attached`; property: `position` |
+    | `reveal` | `<div class="ui reveal">` | Argument `:type`; toggles: `instant`, `disabled`, `active` |
+    | `segment` | `<div class="ui segment">` | Preset `:multiple` → segments wrapper; many toggles |
+    | `step` | `<div class="ui step">` | Preset `:multiple` → steps wrapper; imports: `icon`, `size`, `color` |
+    | `text` | `<span class="ui text">` | Imports: `size`, `color` |
+    | `menu` | `<div class="ui menu">` | Preset `:submenu`; toggles: `secondary`, `vertical`, `inverted`, `fluid`, etc. |
+    | `menu_item` | `<a class="item">` | Preset `:header` → `<div class="header">` |
+
+    ```ruby
+    config.theme = 'semantic_ui'
+    ```
+
+    Add Fomantic-UI to your layout:
+
+    ```html
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fomantic-ui@2.9.3/dist/semantic.min.css">
+    ```
+  </Tab>
+
+  <Tab title="Bootstrap">
+    Bootstrap uses utility-class naming conventions. The helper module is `Torque::Elements::Helpers::Bootstrap`.
+
+    **ICON format:** `"fas fa-%s"` (Font Awesome solid, e.g. `"fas fa-home"`)
+
+    **SIZES mapping:** `sm → 'sm'`, `default → ''`, `lg → 'lg'`
+
+    **Defined elements:**
+
+    | Element | Default tag | Notable properties |
+    |---|---|---|
+    | `button` | `<button class="btn">` | Properties: `outline` → `btn-outline-%s`, `color` → `btn-%s`, `size` → `btn-sm/btn-lg` |
+    | `badge` | `<span class="badge">` | Properties: `pill` → `rounded-pill`, `circle` → `rounded-circle`, `color` → `text-bg-%s` |
+    | `alert` | `<div class="alert">` | Toggles: `fade`, `show`; `dismissible` → `alert-dismissible`; `color` → `alert-%s` |
+    | `card` | `<div class="card">` | Properties: `color` → `text-bg-%s`, `border` → `border-%s` |
+    | `progress` | `<div class="progress">` | Container for `progress_bar` |
+    | `progress_bar` | `<div class="progress-bar">` | Properties: `striped`, `animated`, `color` → `bg-%s` |
+    | `spinner` | `<div class="spinner-border">` | Properties: `small` → `spinner-border-sm`, `color` → `text-%s` |
+    | `icon` | `<i>` | Argument `:name` formatted with Font Awesome `ICON` pattern |
+
+    ```ruby
+    config.theme = 'bootstrap'
+    ```
+
+    Add Bootstrap to your layout:
+
+    ```html
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    ```
+  </Tab>
+
+  <Tab title="Bulma">
+    Bulma uses a modifier-class system (`is-*`, `has-*`). The helper module is `Torque::Elements::Helpers::Bulma`.
+
+    **ICON format:** `"fas fa-%s"` (Font Awesome, same as Bootstrap)
+
+    **SIZES mapping:** `small → 'is-small'`, `default → ''`, `normal → ''`, `medium → 'is-medium'`, `large → 'is-large'` (plus numeric aliases 1–5)
+
+    **Defined elements:**
+
+    | Element | Default tag | Notable presets / notes |
+    |---|---|---|
+    | `button` | `<button class="button">` | Preset `:multiple` → `<div class="has-addons">`; toggles: `light`, `outlined`, `inverted`, `rounded`, `loading`, `fullwidth` |
+    | `badge` / `tag` | `<span class="tag">` | Preset `:multiple` → `<div class="tags has-addons">`; toggles: `rounded`, `delete`, `light`, `hoverable` |
+    | `icon` | `<span class="icon">` | Inner `<i>` auto-generated from `:name` argument |
+    | `title` | `<h1 class="title">` | Preset `:subtitle` → `<h2 class="subtitle">` |
+    | `notification` | `<div class="notification">` | Toggles: `light`, `dark`; imports: `color` |
+    | `progress` | `<progress class="progress">` | Self-closing; imports: `size`, `color` |
+    | `content` | `<div class="content">` | Imports: `size` |
+    | `figure` | `<figure class="image">` | Toggles: `rounded`, `fullwidth`; property: `size` → `is-%1$sx%1$s` |
+    | `block` | `<div class="block">` | Plain wrapper |
+    | `box` | `<div class="box">` | Plain wrapper |
+    | `delete` | `<button class="delete">` | No content; imports: `size` |
+
+    ```ruby
+    config.theme = 'bulma'
+    ```
+
+    Add Bulma to your layout:
+
+    ```html
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+    ```
+  </Tab>
+
+  <Tab title="Tailwind">
+    The Tailwind theme uses utility classes and is the default choice for new Torque Admin installations.
+
+    ```ruby
+    config.theme = 'tailwind'   # this is the default
+    ```
+
+    Add Tailwind to your project via the official installation guide or the `tailwindcss-rails` gem. Because Tailwind is a utility framework, you can customise the look of admin pages with standard Tailwind classes directly in your views and partials without needing additional theme extensions.
+  </Tab>
+</Tabs>
+
+---
+
+## Page Frames
+
+Frames are the outermost HTML chrome that wrap every rendered admin page — they sit between the view template and the application layout and control the placement of the navigation menu, header, main content area, and footer.
+
+Torque Admin ships with four built-in frames:
+
+| Frame | Description |
+|---|---|
+| `classic` | Top navigation menu + full-width `<main>` + footer. Simple horizontal chrome. |
+| `modern` | Fixed top `<header>` with the app banner + vertical sidebar menu + scrollable content area + footer. |
+| `sidebar` | Flex-row layout with a left vertical sidebar (menu + banner) + right `<main>` area + footer. |
+| `minimal` | Bare wrapper with no chrome — useful for login pages, error pages, or highly custom layouts. |
+
+Set the default frame in your `BaseController`:
+
+```ruby
+# app/controllers/admin/base_controller.rb
+class Admin::BaseController < TAController
+  frame 'classic'
+end
+```
+
+You can override the frame per controller or even per action:
+
+```ruby
+class Admin::SessionsController < TAController
+  frame 'minimal'                     # all actions use minimal
+end
+
+class Admin::DashboardController < TAController
+  frame 'modern', only: [:index]      # only the index uses modern
+  frame 'classic', except: [:index]   # everything else uses classic
+end
+```
+
+---
+
+## Extending the Theme
+
+`theme_extensions` lets you add custom UI components or override existing ones without changing the source theme. Extensions are applied directly to the theme's `UiBuilder` subclass in the order they appear in the array.
+
+**Using a Proc** (for quick DSL additions):
+
+```ruby
+config.theme_extensions = [
+  proc do
+    # This block runs in the context of the UiBuilder class
+    define :status_pill do |b|
+      b.preset(:default, as: 'span', class: 'status-pill')
+      b.property(:color).assigns(:class)
+    end
+  end,
+]
+```
+
+**Using a Module** (for method overrides or helpers):
+
+```ruby
+module MyAdmin::ThemeOverrides
+  # Override the built-in badge to always add a custom class
+  def badge(**, &)
+    super(**, class: ['internal-badge'], &)
+  end
+end
+
+Torque::Admin.configure do |config|
+  config.theme = 'semantic_ui'
+  config.theme_extensions = [MyAdmin::ThemeOverrides]
+end
+```
+
+**Combining both**:
+
+```ruby
+config.theme_extensions = [
+  MyAdmin::BaseExtensions,   # Module — included first
+  MyAdmin::ExtraComponents,  # Module — included second (wins on conflicts)
+  proc { define :my_widget { |b| b.preset(:default, as: 'div') } },
+]
+```

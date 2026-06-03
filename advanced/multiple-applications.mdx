@@ -1,0 +1,202 @@
+---
+title: "Multiple Admin Applications in a Single Rails App"
+sidebarTitle: "Multiple Apps"
+description: "Mount two or more fully independent Torque Admin engines in one Rails app, each with its own namespace, theme, authentication strategy, and resource set."
+---
+
+Torque Admin is designed from the ground up to support multiple, fully isolated admin interfaces running side-by-side inside a single Rails application. This is useful when different audiences — internal staff, partner companies, third-party operators — each need a separate admin UI with different authentication rules, themes, and resource access. Every admin application gets its own Rails Engine, namespace module, configuration, router, and UI builder, with no shared state between them.
+
+## Creating a Named Application
+
+The `Torque::Admin[]` operator is the entry point. It accepts a symbol name and returns a memoised `Application` instance, creating it on first call:
+
+```ruby
+Torque::Admin[:default]   # => the built-in :admin application (alias for :default)
+Torque::Admin[:partner]   # => a brand-new Application named :partner
+```
+
+`Torque::Admin.configure` is a convenience alias that targets the default (`:admin`) application:
+
+```ruby
+Torque::Admin.configure do |config|
+  config.title = 'Internal Admin'
+  config.theme = 'tailwind'
+end
+
+# Identical to:
+Torque::Admin[:default].configure do |config|
+  config.title = 'Internal Admin'
+end
+```
+
+Each `Application` instance owns:
+
+| Component | Accessor | Notes |
+|---|---|---|
+| Configuration | `app.config` | Deep-duplicated from `DEFAULT_CONFIG` |
+| Engine class | `app.engine` | Anonymous `Class.new(Admin::Engine)` |
+| Namespace module | `app.mod` | Created under `parent_module` |
+| Resource registry | `@resources` | Isolated hash; cleared on reload |
+| Auth resources | `app.auth_resources` | Tracks which resources have auth configured |
+| UI builder | `app.ui_builder` | Framework-scoped; cleared on reload |
+
+## Namespace Modules
+
+When an `Application` is initialised, it creates (or reuses) a module under `parent_module` (default: `Object`) whose name is the camelised application name. All engine-level constants — `Engine`, `BaseController`, `Resource`, and the lazy controller modules — are defined inside that namespace:
+
+```
+Torque::Admin[:admin]   → Admin::Engine, Admin::BaseController, Admin::Resource, …
+Torque::Admin[:partner] → Partner::Engine, Partner::BaseController, Partner::Resource, …
+```
+
+If both applications share the same `parent_module` (the default `'Object'`), their camelised names **must be different**. If you need two applications whose names would clash, assign a different `parent_module:` to one of them:
+
+```ruby
+Torque::Admin[:partner].configure do |config|
+  config.parent_module = 'Portals'  # creates Portals::Partner::Engine, etc.
+end
+```
+
+<Warning>
+Two applications **cannot share the same module name** under the same parent. If you attempt to create an application whose camelised name maps to a module that already contains an `Engine` constant, Torque Admin raises an `ArgumentError` at boot. Always choose unique `name:` values, or set a distinct `parent_module:` per application.
+</Warning>
+
+<Note>
+Each application's `mod.name` is used as the Rails layout name. For the `:admin` application the layout must be `app/views/layouts/admin.html.erb`; for `:partner` it must be `app/views/layouts/partner.html.erb`. Ensure these layout files exist and match the application's module name exactly.
+</Note>
+
+## Independent Configuration Per Application
+
+Every application starts from a deep-duplicated copy of `DEFAULT_CONFIG`, so changing one application's config never affects another:
+
+```ruby
+Torque::Admin[:admin].configure do |config|
+  config.theme = 'tailwind'
+  config.default_authenticated = true
+  config.stream_actions = true
+end
+
+Torque::Admin[:partner].configure do |config|
+  config.theme = 'bootstrap'
+  config.default_authenticated = true
+  config.base_controller = 'PartnerApplicationController'
+  config.stream_actions = false          # partners get sync responses
+  config.parallel_processing_with = false
+  config.isolate_namespace = true        # full Rails engine isolation
+end
+```
+
+The `isolate_namespace:` option in particular can differ between applications:
+
+- `nil` (default) — hybrid: isolated helpers and routes, but not relative model naming.
+- `true` — full `Rails::Engine` isolation (`isolate_namespace` is called).
+- `false` — no namespace isolation at all.
+
+## Mounting in routes.rb
+
+The `admin` routing helper (mixed into `ActionDispatch::Routing::Mapper` by the gem's Railtie) accepts an optional application name and path:
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  # Default admin at /admin
+  admin do
+    resources :users
+    resources :posts
+  end
+
+  # Partner admin at /partner-portal
+  admin(:partner, '/partner-portal') do
+    resources :accounts
+    resources :invoices
+  end
+end
+```
+
+Calling `admin(:partner, '/partner-portal')` the first time mounts `Partner::Engine` at `/partner-portal`, clears and rebuilds its route set, and marks the engine as mounted so subsequent `admin(:partner)` calls within the same draw only add routes without re-mounting.
+
+The `mount_options` method on the `Application` stores the resolved path in `config.root_path` and passes `as: :partner` to the mount call, giving you named URL helpers like `partner.accounts_path`.
+
+## Separate Base Controllers
+
+Each application's `base_controller` config controls which application controller the generated `TAController` inherits from. Create per-application base controllers to enforce separate authentication and layout logic:
+
+```ruby
+# app/controllers/partner_application_controller.rb
+class PartnerApplicationController < ActionController::Base
+  layout 'partner'
+
+  before_action :authenticate_partner!
+
+  private
+
+  def authenticate_partner!
+    redirect_to partner_login_path unless partner_session_valid?
+  end
+end
+```
+
+```ruby
+# Configure the partner app to use it
+Torque::Admin[:partner].configure do |config|
+  config.base_controller = 'PartnerApplicationController'
+end
+```
+
+## Full Example
+
+### `config/initializers/torque_admin.rb`
+
+```ruby
+# Default (internal) admin
+Torque::Admin[:admin].configure do |config|
+  config.title = 'Internal Admin'
+  config.theme = 'tailwind'
+  config.default_authenticated = true
+end
+
+# Partner portal admin
+Torque::Admin[:partner].configure do |config|
+  config.title = 'Partner Portal'
+  config.theme = 'bootstrap'
+  config.base_controller = 'PartnerApplicationController'
+  config.default_authenticated = true
+  config.stream_actions = false
+end
+```
+
+### `config/routes.rb`
+
+```ruby
+Rails.application.routes.draw do
+  # Internal admin — mounted at /admin (default)
+  admin do
+    resources :users
+    resources :orders
+    resources :products
+  end
+
+  # Partner portal — mounted at /partner-portal
+  admin(:partner, '/partner-portal') do
+    resources :accounts
+    resources :invoices
+    resources :reports
+  end
+end
+```
+
+### Generated URL helpers
+
+```ruby
+# Internal admin helpers (via Admin::Engine)
+admin.users_path         # => /admin/users
+admin.orders_path        # => /admin/orders
+
+# Partner portal helpers (via Partner::Engine)
+partner.accounts_path    # => /partner-portal/accounts
+partner.invoices_path    # => /partner-portal/invoices
+```
+
+## Development Reloading
+
+Each `Application` registers an `ActiveSupport::Reloader.before_class_unload` hook that calls `app.clear`. This resets `@resources`, `@auth_resources`, `@ui_builder`, and `@base_controller`, and removes all lazy constants from the namespace module. It also sets `engine.mounted = false` so the engine is remounted correctly on the next request. Both applications are reloaded independently, so a change in partner-facing code does not unnecessarily invalidate the internal admin's state.
